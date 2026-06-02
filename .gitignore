@@ -1,0 +1,19 @@
+# GithubCopilotExit — .gitignore
+
+# Ollama model files (large binary blobs — don't commit these)
+*.gguf
+*.bin
+Modelfile.*
+!templates/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# PowerShell
+*.ps1xml
+
+# Temp / logs
+*.log
+*.tmp

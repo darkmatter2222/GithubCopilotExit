@@ -1,0 +1,49 @@
+{
+  "env": {
+    "OLLAMA_API_KEY": "ollama-local"
+  },
+  "modelProviders": {
+    "openai": [
+      {
+        "id": "qwen36-agent-32k",
+        "name": "Qwen3.6 35B A3B MTP — Local RTX 5090 (32K)",
+        "description": "Primary agentic coding model. Qwen3.6 35B A3B MTP Q4 at 32K context via Ollama on RTX 5090.",
+        "envKey": "OLLAMA_API_KEY",
+        "baseUrl": "http://localhost:11434/v1",
+        "generationConfig": {
+          "contextWindowSize": 32768,
+          "timeout": 600000,
+          "maxRetries": 2,
+          "samplingParams": {
+            "temperature": 1,
+            "max_tokens": 8192
+          }
+        }
+      },
+      {
+        "id": "qwen36-agent-64k",
+        "name": "Qwen3.6 35B A3B MTP — Local RTX 5090 (64K)",
+        "description": "Extended context profile. Verify 100% GPU with `ollama ps` before using.",
+        "envKey": "OLLAMA_API_KEY",
+        "baseUrl": "http://localhost:11434/v1",
+        "generationConfig": {
+          "contextWindowSize": 65536,
+          "timeout": 900000,
+          "maxRetries": 2,
+          "samplingParams": {
+            "temperature": 1,
+            "max_tokens": 8192
+          }
+        }
+      }
+    ]
+  },
+  "security": {
+    "auth": {
+      "selectedType": "openai"
+    }
+  },
+  "model": {
+    "name": "qwen36-agent-32k"
+  }
+}

@@ -1,0 +1,53 @@
+# Continue Extension Configuration — Local Qwen3.6 on RTX 5090
+#
+# Location: %USERPROFILE%\.continue\config.yaml
+# Written by: GithubCopilotExit setup.ps1
+#
+name: Local Qwen3.6 - RTX 5090
+version: 0.0.1
+schema: v1
+
+models:
+  # Primary: Qwen3.6 35B A3B MTP — agentic coding, chat, edit, apply
+  - name: Qwen3.6 35B A3B MTP (Local RTX 5090)
+    provider: ollama
+    model: qwen36-agent-32k
+    apiBase: http://localhost:11434
+    roles:
+      - chat
+      - edit
+      - apply
+    capabilities:
+      - tool_use
+    defaultCompletionOptions:
+      contextLength: 32768
+      temperature: 1.0
+      top_p: 0.95
+      top_k: 20
+      num_predict: 8192
+
+  # Fallback 64K profile — switch here after verifying 100% GPU with `ollama ps`
+  - name: Qwen3.6 35B A3B MTP 64K (Local RTX 5090)
+    provider: ollama
+    model: qwen36-agent-64k
+    apiBase: http://localhost:11434
+    roles:
+      - chat
+      - edit
+      - apply
+    capabilities:
+      - tool_use
+    defaultCompletionOptions:
+      contextLength: 65536
+      temperature: 1.0
+      top_p: 0.95
+      top_k: 20
+      num_predict: 8192
+
+  # Fast inline autocomplete — does not consume the main model's VRAM slot
+  - name: Fast Autocomplete (qwen2.5-coder 1.5B)
+    provider: ollama
+    model: qwen2.5-coder:1.5b
+    apiBase: http://localhost:11434
+    roles:
+      - autocomplete
