@@ -45,18 +45,46 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # ---------------------------------------------------------------------------
-# 1. Install Ollama
+# 1. Install / Upgrade Ollama
 # ---------------------------------------------------------------------------
 Write-Step "Checking Ollama installation"
-$ollamaPath = Get-Command ollama -ErrorAction SilentlyContinue
-if (-not $ollamaPath) {
-    Write-Host "    Ollama not found — installing via winget..."
-    winget install Ollama.Ollama --accept-package-agreements --accept-source-agreements
-    # Refresh PATH
+
+# Minimum required version for Qwen3.6 MTP support
+$minMajor = 0; $minMinor = 30
+
+function Get-OllamaVersion {
     $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","Machine") + ";" +
                 [System.Environment]::GetEnvironmentVariable("PATH","User")
+    $raw = & ollama --version 2>&1
+    if ($raw -match "(\d+)\.(\d+)\.(\d+)") { return [int]$Matches[1], [int]$Matches[2], [int]$Matches[3] }
+    return 0, 0, 0
+}
+
+function Install-OllamaLatest {
+    # Ollama uses Inno Setup (not NSIS) — requires /VERYSILENT not /S
+    # The official install script handles this correctly and is the recommended approach
+    Write-Host "    Installing Ollama via official install script (~1.4 GB download)..."
+    Stop-Process -Name "ollama" -Force -ErrorAction SilentlyContinue
+    Start-Sleep 2
+    Invoke-Expression (Invoke-RestMethod "https://ollama.com/install.ps1")
+    $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","Machine") + ";" +
+                [System.Environment]::GetEnvironmentVariable("PATH","User")
+    Write-OK "Ollama installed: $(& ollama --version 2>&1)"
+}
+
+$ollamaPath = Get-Command ollama -ErrorAction SilentlyContinue
+if (-not $ollamaPath) {
+    Write-Host "    Ollama not found — installing..."
+    Install-OllamaLatest
 } else {
-    Write-OK "Ollama already installed: $(ollama --version)"
+    $maj, $min, $patch = Get-OllamaVersion
+    if ($maj -lt $minMajor -or ($maj -eq $minMajor -and $min -lt $minMinor)) {
+        Write-Warn "Ollama $maj.$min.$patch is too old (need >= $minMajor.$minMinor for Qwen3.6). Upgrading..."
+        # winget often lags behind; use official install script which always gets latest
+        Install-OllamaLatest
+    } else {
+        Write-OK "Ollama $maj.$min.$patch (>= required $minMajor.$minMinor)"
+    }
 }
 
 # Confirm it's reachable
