@@ -1,5 +1,10 @@
 # GithubCopilotExit — .gitignore
 
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+
 # Ollama model files (large binary blobs — don't commit these)
 *.gguf
 *.bin
