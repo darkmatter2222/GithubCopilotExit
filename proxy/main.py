@@ -121,13 +121,15 @@ async def chat_completions(request: Request):
                                         continue
                                     try:
                                         payload = json.loads(data_part)
-                                        content = (payload.get("choices", [{}])[0]
-                                                   .get("delta", {})
-                                                   .get("content", ""))
-                                        if content:
-                                            token_count += 1
-                                            tracker.record_token(request_id)
-                                    except (json.JSONDecodeError, KeyError):
+                                        choices = payload.get("choices", [])
+                                        if choices:
+                                            content = (choices[0]
+                                                       .get("delta", {})
+                                                       .get("content", ""))
+                                            if content:
+                                                token_count += 1
+                                                tracker.record_token(request_id)
+                                    except (json.JSONDecodeError, KeyError, IndexError):
                                         pass
                             yield chunk
             finally:
