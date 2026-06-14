@@ -179,7 +179,7 @@ async def completions(request: Request):
 async def embeddings(request: Request):
     body = await request.json()
     body = normalize_model(body)
-    async with httpx.AsyncClient(timeout=60) as client:
+    async with httpx.AsyncClient(timeout=None) as client:
         resp = await client.post(
             f"{OLLAMA_BASE}/v1/embeddings",
             json=body,
@@ -283,7 +283,7 @@ setInterval(refresh, 2000);
 @app.get("/health")
 async def health():
     try:
-        async with httpx.AsyncClient(timeout=5) as client:
+        async with httpx.AsyncClient(timeout=30) as client:
             r = await client.get(f"{OLLAMA_BASE}/api/tags")
             ollama_ok = r.status_code == 200
     except Exception:
