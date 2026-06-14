@@ -1,133 +1,137 @@
-# Copilot-Local — Run Your Own LLM on a GPU Server
+# Copilot-Local — Private AI Coding Assistant on Your Own GPU
 
-> Ditch API costs and run Qwen3 locally on your own GPU hardware. A production-ready stack with live monitoring, built for VS Code Copilot but works with anything that speaks the OpenAI API.
-
-## Architecture at a Glance
-
-```
-  ┌──────────────────┐        HTTP :8001       ┌─────────────────────┐     :11434     ┌──────────────────┐
-  │   YOUR LAPTOP    ├────────────────────────►│  GPU SERVER         ├───────────────►│ Docker: ollama     │
-  │                  │                         │                     │                │ (Ollama v0.30.8)    │
-  │  VS Code         │                         │ Docker: llm-proxy   │                │                    │
-  │  Copilot Chat   ◄├─────────────────────────┤  + uvicorn          │                │ qwen3 alias        │
-  │                  │    streamed SSE response │  (FastAPI proxy)     │                │ 27B · Q4_K_M       │
-  └──────────────────┘                         │                     │                │ 262K context         │
-                                               │ ─────────────────── │                │ RTX GPU ≥ 24GB VRAM│
-                                               │ • Clamp temp ≥ 0.6  │                └──────────────────┘
-                                               │ • Rewrite model name│
-                                               │ • Track token TPS   │
-  ┌──────────────────┐                         │ • Pass tools/vision │
-  │   YOUR BROWSER    ├────────────────────────►• /dashboard (live)   │
-  │                  │    HTTP GET              • /stats (JSON API)   │
-  │ http://<IP>:     │                               ┌────────┐      │
-  │   8001/dashboard ◄───────────────────────────────│ live   │      │
-  └──────────────────┘                              │ stats  │      │
-                                                    └────────┘      │
-                                               └─────────────────────┘
-```
-
-### Component Guide
-
-| Piece | What It Does | Where it runs |
-|---|---|---|
-| **VS Code Copilot** | Sends chat completions via configured custom endpoint | Your laptop |
-| **LLM Proxy** (FastAPI + uvicorn) | Intercepts requests, clamps temperature ≥ 0.6 (Qwen3 requires it), rewrites model names, tracks token throughput in real time | GPU server (Docker container) |
-| **Ollama** | Inference engine — loads GGUF weights onto VRAM, generates tokens, streams SSE response | GPU server (Docker container) |
-| **qwen3.6 27B** | The model itself: 27B parameters, Q4_K_M quantized (~18 GB VRAM), native tool calling + vision, 262K context | GPU server (VRAM) |
-| **Live Dashboard** | Auto-refreshing HTML page at /dashboard showing tokens/sec, active requests, per-request stats | Any browser on your LAN |
-
-### Proxy Endpoints
-
-| Endpoint | Purpose |
-|---|---|
-| `POST /v1/chat/completions` | OpenAI-compatible chat (what VS Code talks to) |
-| `POST /v1/completions` | Raw completions |
-| `GET  /health` | Health check — proxies to Ollama status |
-| `GET  /dashboard` | **LIVE dashboard** — open in browser, auto-refreshes every 2s |
+Run **Qwen3.6 27B** locally on your RTX 5090. Zero API costs. Full 262K context. Native tool calling and vision. Works exactly like GitHub Copilot but runs entirely on your hardware.
 
 ---
 
-## Why This Exists
+## How It Works
 
-VS Code Copilot sends a temperature of 0.1 by default. Qwen3 thinking mode requires temperature ≥ 0.6 or the model produces garbage. The proxy lives between VS Code and Ollama on your GPU server — it clamps the temperature, rewrites model names to match what you deployed, and gives you a live monitoring dashboard so you can see real-time token throughput when multiple clients hit the model simultaneously.
+```
+  VS Code Copilot Chat
+        │
+        │  OpenAI-compatible API  (localhost:8001)
+        ▼
+  ┌─────────────────────────────┐
+  │   FastAPI Proxy              │  proxy/main.py  — runs on YOUR machine
+  │   • Clamps temp to >= 0.6   │  (Qwen3 thinking mode needs this)
+  │   • Rewrites model name     │
+  │   • Tracks token TPS live   │
+  │   • /dashboard (live stats) │
+  └────────────┬────────────────┘
+               │  localhost:11434
+               ▼
+  ┌─────────────────────────────┐
+  │   Ollama (local)             │  ollama.com — runs on YOUR machine
+  │   model: qwen3 alias         │
+  │   (262K context baked in)    │
+  └────────────┬────────────────┘
+               │  PCIe / NVLink
+               ▼
+     RTX 5090  (local GPU)
+     qwen3.6:27b-mtp-q4_K_M  (~18 GB VRAM)
+```
 
-**In short:** It makes Qwen3 work correctly in VS Code Copilot with zero config changes on the IDE side.
+Everything runs on your machine. No cloud. No subscription. No data leaves your box.
 
 ---
 
-## Quick Start
+## Prerequisites
 
-### What You Need
+1. **Windows** with an RTX 5090 (or any NVIDIA GPU with 24 GB+ VRAM)
+2. **Ollama** installed: https://ollama.com (just download and run the installer)
+3. **Python 3.12+** installed: https://python.org
+4. **VS Code** with the GitHub Copilot extension
 
-1. A Linux machine (bare metal or VM) with an NVIDIA GPU (**24 GB+ VRAM recommended**)
-2. [Docker](https://docs.docker.com/get-docker/) + [nvidia-container-toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) on that server
-3. SSH access from your laptop to the server
+---
 
-### 1-Command Deploy
+## First-Time Setup (Run Once)
 
-```bash
-git clone https://github.com/yourname/copilot-local.git
-cd copilot-local
-cp .env.example .env          # Fill in your remote server IP, username, key path
-bash scripts/deploy-remote.sh
+```powershell
+git clone https://github.com/darkmatter2222/GithubCopilotExit.git
+cd GithubCopilotExit
+
+# One-time setup: installs deps, pulls model (~18 GB), creates qwen3 alias
+.\scripts\setup-local.ps1
 ```
 
-The script:
-1. Uploads proxy source code to the GPU server
-2. Builds a Docker image for the FastAPI proxy
-3. Pulls the qwen3 model into Ollama via `docker exec`
-4. Starts both Docker containers with health checks
-5. Runs smoke tests against the stack
+`setup-local.ps1` will:
+1. Create `.venv` and install Python dependencies
+2. Verify Ollama is running (`ollama serve` must be active)
+3. Pull `qwen3.6:27b-mtp-q4_K_M` (18 GB — only downloads once)
+4. Create the `qwen3` alias with 262K context baked in
 
-### Verify Everything Works
+**The alias is required.** Using the raw model name gives only 32K context, which causes `finish_reason: length` errors during long agentic sessions.
 
-```bash
-curl http://YOUR_SERVER_IP:8001/health
-# → {"status":"ok","ollama":true} ✅
+---
+
+## Starting the Stack (Every Session)
+
+### Step 1 — Make sure Ollama is running
+
+Ollama starts automatically with Windows if you used the installer. If not:
+
+```powershell
+ollama serve
 ```
 
-Open **http://YOUR_SERVER_IP:8001/dashboard** in a browser to watch live token throughput.
+Verify: http://localhost:11434 should respond.
+
+### Step 2 — Start the proxy
+
+```powershell
+.\scripts\start-proxy-local.ps1
+```
+
+This starts the FastAPI proxy at **http://localhost:8001**. Keep this terminal open — it streams request logs as you use the model.
+
+### Step 3 — Verify
+
+```powershell
+Invoke-RestMethod http://localhost:8001/health
+# → status: ok, ollama: True
+```
+
+Open **http://localhost:8001/dashboard** in your browser for live token throughput.
 
 ---
 
 ## VS Code Setup
 
-Point VS Code at the proxy using `chatLanguageModels.json` (in `%APPDATA%\Code\User\` on Windows):
+Edit `%APPDATA%\Code\User\chatLanguageModels.json`:
 
 ```jsonc
-{
-  "name": "Local GPU",
-  "vendor": "customendpoint",
-  "apiKey": "no-key",
-  "apiType": "chat-completions",
-  "models": [{
-    "id": "qwen3",
-    "name": "Qwen3.6-27B (Local GPU)",
-    "url": "http://<YOUR_SERVER_IP>:8001/v1/chat/completions",
-    "toolCalling": true,
-    "vision": true,
-    "maxInputTokens": 120000,
-    "maxOutputTokens": 16000,
-    "thinking": true,
-    "streaming": true
-  }]
-}
+[
+  {
+    "name": "Local RTX 5090",
+    "vendor": "customendpoint",
+    "apiKey": "no-key",
+    "apiType": "chat-completions",
+    "models": [{
+      "id": "qwen3",
+      "name": "Qwen3.6-27B (RTX 5090)",
+      "url": "http://localhost:8001/v1/chat/completions",
+      "toolCalling": true,
+      "vision": true,
+      "maxInputTokens": 120000,
+      "maxOutputTokens": 16000,
+      "thinking": true,
+      "streaming": true
+    }]
+  }
+]
 ```
 
-**Important:** Use your GPU server's LAN IP (e.g., `192.168.86.48`), not `localhost`. If you run uvicorn locally with the proxy code, `localhost` works too.
+**Why `maxOutputTokens: 16000`?** Qwen3 burns 5K-15K tokens on its internal `<think>` monologue before writing output. 16K gives plenty of room without wasting context.
 
 ---
 
-## Live Stats Dashboard
+## Live Dashboard
 
-Open **`http://<SERVER_IP>:8001/dashboard`** in any browser. The page auto-refreshes every 2 seconds and shows:
+While the proxy is running, open **http://localhost:8001/dashboard** in any browser:
 
-- **Combined tokens/sec** — total throughput across ALL active requests
-- **Active requests** — how many clients are streaming right now
-- **Total tokens this session** — cumulative count since proxy last restarted
-- **Per-request table** — individual TPS, token count, live/done status
-
-The dashboard is backed by an in-memory token tracker (`tracker.py`) that intercepts every SSE delta with non-empty content and counts it. No external dependencies. Stats persist only for the lifetime of the proxy process (no database).
+- Combined tokens/sec across all active requests
+- Per-request token count and TPS
+- Total tokens generated this session
 
 ---
 
@@ -136,60 +140,26 @@ The dashboard is backed by an in-memory token tracker (`tracker.py`) that interc
 ```
 copilot-local/
 ├── proxy/
-│   ├── Dockerfile           # Container image for FastAPI proxy
-│   ├── main.py              # Proxy app — routes, temp clamping, streaming
-│   ├── requirements.txt     # Python deps (fastapi, uvicorn, httpx)
-│   └── tracker.py           # Real-time token throughput tracker
+│   ├── main.py              # FastAPI proxy — temp clamping, routing, dashboard
+│   ├── tracker.py           # Real-time token throughput tracker (in-memory)
+│   ├── requirements.txt     # fastapi, uvicorn, httpx
+│   └── Dockerfile           # Optional: containerize the proxy
 ├── scripts/
-│   ├── deploy-remote.sh     # One-command deploy to GPU server
-│   ├── fix-context.sh       # Fix Ollama: restart with 262K context + recreate qwen3 alias
-│   ├── start-proxy-local.ps1 # Run proxy locally (Windows dev)
-│   ├── test-proxy.py        # Smoke test script
-│   └── warmup.py            # Load model into VRAM after startup
-├── .env.example             # Template — copy to .env and fill in
-├── .gitignore
-└── AGENTS.md                # Stack state reference for AI agents
+│   ├── setup-local.ps1      # ONE-TIME: install deps, pull model, create alias
+│   ├── start-proxy-local.ps1 # START THIS every session before using VS Code
+│   ├── test-proxy.py        # Smoke test: health check + sample chat request
+│   └── warmup.py            # Pre-load model into VRAM after Ollama starts
+└── AGENTS.md                # Stack reference for AI coding agents
 ```
 
 ---
 
-## Known Issues & Fixes
+## Known Issues
 
-| Error | Root Cause | Fix |
+| Error | Cause | Fix |
 |---|---|---|
-| `ERR_INCOMPLETE_CHUNKED_ENCODING` at exactly 5 min | httpx timeout was 300s | Fixed — `timeout=None` in proxy |
-| `finish_reason: length` / response truncated | qwen3 alias has 32K context instead of 262K | Run `scripts/fix-context.sh` on remote |
-| `unknown model architecture: 'qwen35'` | Wrong Ollama Docker image | Use `v0.30.8-final` tag specifically |
-| `llama-server binary not found` | `:updated` custom image broke inference | Use `v0.30.8-final` |
-| Model cold on first request (slow response) | `OLLAMA_KEEP_ALIVE` not set or container restarted | Set `-e OLLAMA_KEEP_ALIVE=-1`, run `warmup.py` |
-
----
-
-## Recovery Runbook
-
-If the stack on your GPU server breaks and needs a full restore:
-
-```bash
-# SSH in
-ssh -i $SSH_KEY_PATH $SSH_USER@$SSH_HOST
-
-# Full fix: restart Ollama, recreate alias, warm VRAM
-bash scripts/fix-context.sh           # or scp it over first from this repo
-
-# Rebuild and restart the proxy
-bash scripts/deploy-remote.sh
-
-# Verify health
-curl http://localhost:8001/health
-# → {"status": "ok", "ollama": true}
-
-# Verify context is 262K (not 32K!)
-curl -s http://localhost:11434/api/ps
-# Look for: "context_length": 262144
-```
-
----
-
-## License & Contributing
-
-Open to PRs. This was built out of frustration with API costs and the desire to leverage an existing GPU purchase locally. Share it far and wide — local AI should be easy.
+| `ERR_CONNECTION_REFUSED` in VS Code | Proxy not running | Run `.\scripts\start-proxy-local.ps1` |
+| `finish_reason: length` / truncated responses | `qwen3` alias missing 262K context | Re-run `.\scripts\setup-local.ps1` |
+| `ModuleNotFoundError: fastapi` | Wrong Python / venv not active | Use the proxy via `start-proxy-local.ps1` (calls `.venv\uvicorn.exe` directly) |
+| First request is slow | Model not in VRAM yet | Run `python scripts\warmup.py` after starting Ollama |
+| `maxOutputTokens` error in VS Code | Cap too low for thinking mode | Set `maxOutputTokens` to 16000 in `chatLanguageModels.json` |
