@@ -5,7 +5,8 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY main.py .
+# Copy all proxy source files (main.py, tracker.py, etc.)
+COPY *.py ./
 
 ENV OLLAMA_BASE_URL=http://ollama:11434
 ENV SERVED_MODEL_NAME=qwen3

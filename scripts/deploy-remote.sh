@@ -24,8 +24,10 @@ SSH_OPTS="-i $SSH_KEY -o StrictHostKeyChecking=no"
 
 echo "==> Copying proxy source to $SSH_HOST:$REMOTE_DEPLOY_DIR"
 ssh $SSH_OPTS "$SSH_USER@$SSH_HOST" "mkdir -p $REMOTE_DEPLOY_DIR"
+# Copy all Python files + requirements (main.py, tracker.py, etc.)
 scp $SSH_OPTS \
     "$REPO_ROOT/proxy/main.py" \
+    "$REPO_ROOT/proxy/tracker.py" \
     "$REPO_ROOT/proxy/requirements.txt" \
     "$REPO_ROOT/proxy/Dockerfile" \
     "$SSH_USER@$SSH_HOST:$REMOTE_DEPLOY_DIR/"

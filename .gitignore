@@ -22,3 +22,9 @@ desktop.ini
 # Temp / logs
 *.log
 *.tmp
+
+# Python compiled / cache
+__pycache__/
+*.pyc
+*.pyo
+.venv/

@@ -15,11 +15,11 @@ All server credentials are stored in `.env` (gitignored). **Do not prompt the us
 | `SERVED_MODEL_NAME` | Model alias name served to clients (default: `qwen3`) |
 | `MIN_TEMPERATURE` | Minimum temperature floor enforced by the proxy (default: `0.6`) |
 
-**Remote server specs:** RTX 3090 24 GB VRAM, running Ubuntu, Docker with nvidia-container-toolkit.
+**Remote server specs:** RTX 3090, 24 GB VRAM, running Ubuntu, Docker with nvidia-container-toolkit.
 
-**Model:** `qwen3.6:27b-mtp-q4_K_M` (~18 GB, Q4_K_M quantization, 262K context, native tool calling, vision, thinking mode).
+**Model:** `qwen3.6:27b-mtp-q4_K_M` (~18 GB, Q4\_K\_M quantization, 262K context, native tool calling, vision, thinking mode).
 
-**Proxy:** FastAPI on port 8001 — clamps temperature to ≥ 0.6 before forwarding to Ollama on `localhost:11434`.
+**Proxy:** FastAPI on port 8001 — clamps temperature to ≥ 0.6 before forwarding to Ollama. Exposes live stats dashboard at `/dashboard`.
 
 To SSH in: `ssh -i $SSH_KEY_PATH $SSH_USER@$SSH_HOST`
 
@@ -44,13 +44,13 @@ docker run -d \
 ```
 
 **Critical image version note:** Use `v0.30.8-final` specifically.
-- `ollama/ollama:latest` is too old — does not know `qwen35` architecture, throws `unknown model architecture: 'qwen35'`
-- `ollama/ollama:updated` (custom build) — broke inference, `llama-server binary not found`
-- `ollama/ollama:v0.30.8-final` — ✅ working
+- `ollama/ollama:latest` — too old, unknown model architecture for qwen35
+- `ollama/ollama:updated` — broke inference, llama-server binary not found
+- `ollama/ollama:v0.30.8-final` — working, supports qwen3.6 and 262K context
 
-### qwen3 alias (must be recreated after every `docker rm`)
+### qwen3 alias (must be recreated after every Docker restart)
 
-The model is served as `qwen3` not `qwen3.6:27b-mtp-q4_K_M`. The alias bakes in `num_ctx 262144`. Without it the model runs with 32K context, causing `finish_reason: length` errors on long sessions.
+The model is served as `qwen3` not the full `qwen3.6:27b-mtp-q4_K_M`. The alias bakes in `num_ctx 262144`. Without it the model defaults to 32K context, causing `finish_reason: length` errors on long sessions.
 
 ```bash
 docker exec ollama bash -c '
@@ -60,6 +60,8 @@ ollama create qwen3 -f /tmp/qwen3.modelfile
 ```
 
 ### Proxy container
+
+Runs on host network + FastAPI with token tracker. Tracks throughput in-memory (no DB).
 
 ```bash
 docker run -d \
@@ -71,6 +73,14 @@ docker run -d \
   -e MIN_TEMPERATURE=0.6 \
   llm-proxy:latest
 ```
+
+### Proxy Endpoints
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /v1/chat/completions` | OpenAI-compatible chat (VS Code talks here) |
+| `GET  /health` | Health check — proxies to Ollama status |
+| `GET  /dashboard` | **LIVE dashboard** — dark-themed HTML, auto-refreshes every 2s |
 
 ### VS Code client config (`%APPDATA%\Code\User\chatLanguageModels.json`)
 
@@ -140,57 +150,16 @@ ssh -i $SSH_KEY_PATH $SSH_USER@$SSH_HOST "curl -s http://localhost:11434/api/ps"
 
 ---
 
-## Objective
-
-Implement requested changes completely within this repository. A task is **not complete** when code has merely been written. It is complete only when the requested behavior is implemented and the applicable validation succeeds, or when a concrete, unrecoverable blocker is explicitly documented with evidence.
-
-## Required Working Pattern
-
-### 1. Inspect before changing
-
-- Read the relevant source files, tests, configuration, and nearby implementation patterns before writing any code.
-- Identify the repository's established conventions (naming, error handling, test structure, dependency patterns) and follow them unless the task explicitly requires a change.
-- Do not assume what a file contains — read it.
-
-### 2. Implement coherently
-
-- Make the smallest coherent set of changes that fully satisfies the requested outcome.
-- Preserve all existing behavior outside the requested scope.
-- Do not rewrite unrelated components or introduce new dependencies unless necessary and justified.
-- Do not generate placeholder implementations. Implement the real behavior.
-
-### 3. Validate after every change
-
-- Run the narrowest relevant tests first (unit tests for the modified module).
-- Then run the full applicable chain: formatter → linter → type checker → build → integration tests.
-- Use the commands listed in the **Repository Commands** section below.
-- When validation fails because of a change, diagnose the actual root cause, apply a corrective fix, and rerun validation. Do not suppress, skip, or weaken tests to obtain a passing result.
-
-### 4. Continue until done
-
-- Do not stop after producing a plan, outline, partial patch, or explanation.
-- Do not report success while any relevant test, type check, or build step fails.
-- Continue the inspect → implement → validate → fix loop until validation succeeds or a specific blocker is proven with evidence.
-- "I believe this should work" is not completion. Running the validation and seeing it pass is completion.
-
-### 5. Protect the repository
-
-- Operate only in the assigned branch or isolated worktree.
-- Do not commit, push, publish, deploy, change credentials, delete significant files, or modify infrastructure without explicit instruction from the user.
-- Do not weaken tests, remove assertions, or disable linting rules to obtain a passing run.
-- Do not introduce hardcoded credentials, secrets, insecure defaults, or SQL/command injection vectors.
-- Never commit `.env` or any file containing real IPs, usernames, SSH key paths, or passwords.
-
 ## Repository Commands
 
 ```
 Install dependencies : pip install -r proxy/requirements.txt
-Smoke test proxy    : python scripts/test-proxy.py
-Deploy to remote    : bash scripts/deploy-remote.sh
-Fix Ollama ctx      : bash scripts/fix-context.sh  (run on remote)
-Warm up model       : python scripts/warmup.py     (run on remote)
-Build               : NOT APPLICABLE (no compiled artifacts)
-Unit tests          : NOT APPLICABLE (integration-only)
+Smoke test proxy     : python scripts/test-proxy.py
+Deploy to remote     : bash scripts/deploy-remote.sh
+Fix Ollama ctx       : bash scripts/fix-context.sh  (run on remote)
+Warm up model        : python scripts/warmup.py     (run on remote)
+Build                : NOT APPLICABLE (no compiled artifacts)
+Unit tests           : NOT APPLICABLE (integration-only)
 ```
 
 ## Architecture and Conventions
@@ -202,7 +171,20 @@ Unit tests          : NOT APPLICABLE (integration-only)
 - **Dependency management:** `pip` with pinned versions in `proxy/requirements.txt`
 - **Security/privacy constraints:** `.env` is gitignored and must never be committed. No auth on the proxy (LAN-only service). No hardcoded IPs or usernames in committed files.
 
-## Completion Report
+### Key Files
+
+| File | Purpose |
+|---|---|
+| `proxy/main.py` | FastAPI proxy app — routes, temp clamping, streaming handler, dashboard HTML |
+| `proxy/tracker.py` | Thread-safe real-time token throughput tracker (in-memory, no DB) |
+| `proxy/Dockerfile` | Container image for proxy (`COPY *.py ./` to include all Python files) |
+| `scripts/deploy-remote.sh` | One-command deploy: scp source + build image + start containers |
+| `scripts/fix-context.sh` | Full Ollama recovery: restart container, recreate qwen3 alias, warm VRAM |
+| `scripts/start-proxy-local.ps1` | Run proxy locally on Windows (for dev/testing without Docker) |
+| `scripts/test-proxy.py` | Smoke test — hits /health and /v1/chat/completions endpoints |
+| `scripts/warmup.py` | Load model into VRAM after startup (prevents cold-first-request lag) |
+
+## Completion Report Format
 
 Before reporting completion, provide all of the following:
 
@@ -211,101 +193,6 @@ Before reporting completion, provide all of the following:
 3. **Validation results** — pass/fail for each command, with any relevant output.
 4. **Assumptions made** — anything inferred rather than explicitly stated.
 5. **Remaining limitations or known issues** — if any exist after completion.
-
-## Prohibited Shortcuts
-
-- Do not claim completion without executing the relevant validation commands.
-- Do not replace working implementation patterns with untested speculative abstractions.
-- Do not suppress errors, remove assertions, disable tests, comment out checks, or weaken validation to obtain a passing run.
-- Do not introduce secrets, hardcoded credentials, insecure defaults, or unrelated formatting churn.
-- Do not modify files outside the scope of the requested change without explicit justification.
-- Do not invent API signatures, function names, or module paths that do not exist — read the actual source first.
-
-
-## Objective
-
-Implement requested changes completely within this repository. A task is **not complete** when code has merely been written. It is complete only when the requested behavior is implemented and the applicable validation succeeds, or when a concrete, unrecoverable blocker is explicitly documented with evidence.
-
-## Required Working Pattern
-
-### 1. Inspect before changing
-
-- Read the relevant source files, tests, configuration, and nearby implementation patterns before writing any code.
-- Identify the repository's established conventions (naming, error handling, test structure, dependency patterns) and follow them unless the task explicitly requires a change.
-- Do not assume what a file contains — read it.
-
-### 2. Implement coherently
-
-- Make the smallest coherent set of changes that fully satisfies the requested outcome.
-- Preserve all existing behavior outside the requested scope.
-- Do not rewrite unrelated components or introduce new dependencies unless necessary and justified.
-- Do not generate placeholder implementations. Implement the real behavior.
-
-### 3. Validate after every change
-
-- Run the narrowest relevant tests first (unit tests for the modified module).
-- Then run the full applicable chain: formatter → linter → type checker → build → integration tests.
-- Use the commands listed in the **Repository Commands** section below.
-- When validation fails because of a change, diagnose the actual root cause, apply a corrective fix, and rerun validation. Do not suppress, skip, or weaken tests to obtain a passing result.
-
-### 4. Continue until done
-
-- Do not stop after producing a plan, outline, partial patch, or explanation.
-- Do not report success while any relevant test, type check, or build step fails.
-- Continue the inspect → implement → validate → fix loop until validation succeeds or a specific blocker is proven with evidence.
-- "I believe this should work" is not completion. Running the validation and seeing it pass is completion.
-
-### 5. Protect the repository
-
-- Operate only in the assigned branch or isolated worktree.
-- Do not commit, push, publish, deploy, change credentials, delete significant files, or modify infrastructure without explicit instruction from the user.
-- Do not weaken tests, remove assertions, or disable linting rules to obtain a passing run.
-- Do not introduce hardcoded credentials, secrets, insecure defaults, or SQL/command injection vectors.
-
-## Completion Report
-
-Before reporting completion, provide all of the following:
-
-1. **What changed** — which files were modified and why.
-2. **Validation commands executed** — exact commands run, in order.
-3. **Validation results** — pass/fail for each command, with any relevant output.
-4. **Assumptions made** — anything inferred rather than explicitly stated.
-5. **Remaining limitations or known issues** — if any exist after completion.
-
-## Repository Commands
-
-> Fill these in for each project. Run `./scripts/setup.ps1` or your project's bootstrap command first.
-
-```
-Install dependencies : [COMMAND]
-Format               : [COMMAND]
-Lint                 : [COMMAND]
-Type check           : [COMMAND]
-Unit tests           : [COMMAND]
-Integration tests    : [COMMAND or NOT APPLICABLE]
-Build                : [COMMAND]
-```
-
-**Common examples by ecosystem:**
-
-| Ecosystem | Test command | Build command |
-|---|---|---|
-| Python | `python -m pytest` | `python -m build` |
-| Node/TypeScript | `npm test` | `npm run build` |
-| .NET | `dotnet test` | `dotnet build` |
-| Rust | `cargo test` | `cargo build` |
-| Go | `go test ./...` | `go build ./...` |
-
-## Architecture and Conventions
-
-> Fill in project-specific rules. Generate a starting point with `/init` in Qwen Code or Roo Code.
-
-- **Primary language/framework:** `[VALUE]`
-- **Preferred testing pattern:** `[VALUE]`
-- **Error handling convention:** `[VALUE]`
-- **Logging convention:** `[VALUE]`
-- **Dependency management:** `[VALUE]`
-- **Security/privacy constraints:** `[VALUE]`
 
 ## Prohibited Shortcuts
 
