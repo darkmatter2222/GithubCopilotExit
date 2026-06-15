@@ -2,14 +2,14 @@
 
 # 🚀 GitHub Copilot Local
 
-### Run Qwen3.6-27B on your GPU · Zero API costs · 262K context · Full privacy · Works in any VS Code project
+### Run Qwen3.6-27B (Q4 quantized) on your GPU · Zero API costs · ~128K usable context · Full privacy · Works in any VS Code project
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 [![Model](https://img.shields.io/badge/Model-Qwen3.6--27B-purple)](https://ollama.com/library/qwen3.6)
 [![Python](https://img.shields.io/badge/Python-3.12-blue)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/Framework-FastAPI-green)](https://fastapi.tiangolo.com/)
 [![GPU](https://img.shields.io/badge/GPU-RTX--5090-black)](#)
-[![Context](https://img.shields.io/badge/Context-262K%20tokens-important)](#)
+[![Context](https://img.shields.io/badge/Context--128K%20tokens-blue)](#)
 [![Ollama](https://img.shields.io/badge/Runtime-Ollama-orange)](https://ollama.com/)
 
 > **Private AI coding assistant**, running entirely on your own hardware. Same VS Code experience, zero API costs, complete privacy — no data ever leaves your machine.
@@ -46,7 +46,7 @@ Then open VS Code, fire up Copilot Chat, and select **Qwen3.6-27B (RTX 5090)**. 
 | Feature | Status | Detail |
 | ------- | :----: | ------ |
 | Full privacy | ✅ | Everything runs locally — no data leaves your machine |
-| 262K context | ✅ | Entire codebases fit in a single conversation |
+| ~128K usable context | ✅ | Large files and multi-file edits in one conversation (see context note below) |
 | Tool calling | ✅ | Files, terminals, search — same as cloud Copilot |
 | Vision support | ✅ | Image understanding for debugging and diagrams |
 | Thinking mode | ✅ | Deep reasoning chains for complex tasks |
@@ -80,7 +80,7 @@ Then open VS Code, fire up Copilot Chat, and select **Qwen3.6-27B (RTX 5090)**. 
   ┌──────────────────────┐
   │       Ollama         │  ← Local model server
   │   alias: qwen3       │    (qwen3.6:27b-mtp-q4_K_M, Q4 quant)
-  │   context: 262K      │
+  │   context: ~128K (Q4 quant) │
   └──────────┬───────────┘
              │  PCIe → VRAM (~18 GB)
              ▼
@@ -89,7 +89,33 @@ Then open VS Code, fire up Copilot Chat, and select **Qwen3.6-27B (RTX 5090)**. 
   ╚══════════════════════╝
 ```
 
-> **Key insight:** VS Code Copilot Chat already supports custom OpenAI-compatible endpoints. All we need is a thin proxy connecting it to Ollama, with two tricks — clamping temperature for thinking mode and ensuring 262K context via a model alias. The `qwen3` alias is critical; without it, Ollama defaults to 32K context and truncates mid-thought on larger tasks.
+> **Key insight:** VS Code Copilot Chat already supports custom OpenAI-compatible endpoints. All we need is a thin proxy connecting it to Ollama, with two tricks — clamping temperature for thinking mode and ensuring large context via a model alias. The `qwen3` alias sets `num_ctx` to 262K (the model's max), but **usable context depends on your GPU VRAM** — see the VRAM breakdown below. Ollama defaults to 32K without this alias, which truncates mid-thought on larger tasks.
+
+---
+
+## 💾 Context & VRAM — Why This Matters
+
+The `qwen3` alias configures a **262K context window** (`num_ctx = 262144`), but your *usable* context is determined by available VRAM after loading the model weights:
+
+```
+VRAM Budget (RTX 5090, 32 GB total):
+├── Model weights (Q4_K_M quant)   ~18 GB
+├── OS overhead + drivers           ~1-2 GB
+├── Available for KV cache          ~12 GB
+└── Usable context                  ~128K-131K tokens
+```
+
+> **KV cache is the hidden cost.** Every input token loaded into context reserves VRAM for its key/value states. More context = more VRAM consumed before generation even begins. If the KV cache exhausts available VRAM, Ollama will offload to CPU (slow) or truncate entirely.
+
+### GPU Compatibility Reality Check
+
+| GPU | Total VRAM | Model Weights (Q4) | Remaining for KV Cache | Usable Context | Verdict |
+| --- | ---------- | ------------------ | ---------------------- | -------------- | ------- |
+| **RTX 5090** | 32 GB | ~18 GB | ~12 GB | **~128K tokens** | ✅ Excellent — full experience |
+| **RTX 4090 / 3090** | 24 GB | ~18 GB | ~4 GB | **~32K tokens** | ⚠️ Works but limited context — see below |
+| **< 20 GB VRAM** | -- | Model won't fit | N/A | Won't run | ❌ Not viable for this model |
+
+> **⚠️ RTX 4090/3090 (24 GB) users:** The Q4 quantized model weights alone consume ~18 GB, leaving only ~4-6 GB for the KV cache. This means your *theoretical* context is 262K but you'll realistically get **~32K usable tokens** before VRAM runs out. You can still do great coding work — it's plenty for most tasks — just don't try to stuff an entire codebase into one conversation. Consider lowering `maxInputTokens` in your config to avoid VRAM exhaustion errors.
 
 ---
 
@@ -101,7 +127,7 @@ Then open VS Code, fire up Copilot Chat, and select **Qwen3.6-27B (RTX 5090)**. 
 | ----------- | ------- | ----- |
 | Windows | 10/11 | PowerShell 5.1+ included |
 | Python | 3.12 | Script auto-creates `.venv` for you |
-| GPU | RTX 4090 / 5090+ | 24GB+ VRAM recommended (Q4 quant) |
+| GPU | RTX 4090 / 5090+ | **32 GB VRAM recommended** (Q4 weights = ~18GB, KV cache needs headroom) |
 | Disk Space | ~18 GB free | Model download, one-time only |
 | VS Code | Latest release | With GitHub Copilot extension installed |
 
@@ -117,7 +143,7 @@ This will:
 - Create a `.venv` virtual environment and install Python dependencies (FastAPI, Uvicorn, httpx)
 - Verify Ollama is installed and reachable at `localhost:11434`
 - Pull `qwen3.6:27b-mtp-q4_K_M` (~18 GB, one-time download only)
-- Create the **`qwen3` alias with 262K context baked in** (this is critical — see below)
+- Create the **`qwen3` alias with large context window** (`num_ctx = 262144`) — actual usable context depends on your GPU VRAM (see above)
 
 ### Step 2 — Configure VS Code (`chatLanguageModels.json`) ⭐
 
@@ -167,7 +193,7 @@ The file is a JSON array. Each element defines an "endpoint group" of models. If
         "url": "http://localhost:8001/v1/chat/completions",
         "toolCalling": true,         // Enable file edits, terminal commands, etc.
         "vision": true,             // Enable image/screenshot understanding
-        "maxInputTokens": 120000,    // Generous window (hard cap is 262K)
+        "maxInputTokens": 120000,    // Safe for 32GB GPU (~128K usable from KV cache)
         "maxOutputTokens": 16000,   // Enough for detailed code responses
         "thinking": true,            // Enable deep reasoning chains
         "streaming": true            // Real-time token streaming (responsive feel)
@@ -190,7 +216,7 @@ The file is a JSON array. Each element defines an "endpoint group" of models. If
 | **→ models[].url** | `http://localhost:8001/v1/chat/completions` | Points to your proxy — must have trailing path |
 | `toolCalling` | `true` | Enables file/terminal/search tool operations |
 | `vision` | `true` | Enables screenshot/image understanding |
-| `maxInputTokens` | `120000` | How much context you can send (model supports up to 262K) |
+| `maxInputTokens` | `120000` | Safe for RTX 5090 (~128K usable from KV cache) — 24GB GPUs should lower to ~32000 |
 | `maxOutputTokens` | `16000` | Max response length — too low cuts off thinking mode |
 | `thinking` | `true` | Enables the model's internal reasoning chain |
 | `streaming` | `true` | Tokens appear progressively as they're generated |
@@ -301,19 +327,21 @@ GithubCopilotExit/
 | Ollama base URL | `OLLAMA_BASE_URL` env var | `http://localhost:11434` | If Ollama runs on a different host/port |
 | Served model name | `SERVED_MODEL_NAME` env var | `qwen3` | Must match your Ollama alias Name |
 | Min temperature | `MIN_TEMPERATURE` env var | `0.6` | Qwen3 thinking mode requires ≥ 0.6 |
-| Max input tokens | VS Code config (`maxInputTokens`) | `120000` | Hard cap is 262K (model limit) |
+| Max input tokens | VS Code config (`maxInputTokens`) | `120000` | ~128K usable on 32GB GPU; lower for 24GB (~32K) |
 | Max output tokens | VS Code config (`maxOutputTokens`) | `16000` | Higher = longer responses, more VRAM pressure |
 
-### Running on Different GPUs
+### Running on Different GPUs — Honest Breakdown
 
 While the reference setup targets an RTX 5090, this stack works with various GPU configurations:
 
-| GPU | VRAM | Recommended Model | Performance |
-| --- | ---- | ----------------- | ----------- |
-| RTX 5090 | 32 GB | qwen3.6:27b Q4 (default) | Excellent — fast generation |
-| RTX 4090 | 24 GB | qwen3.6:27b Q4 | Great — works well |
-| RTX 3090 | 24 GB | qwen3.6:27b Q4 | Good — solid performance |
-| < 24 GB VRAM | -- | Consider smaller quant or model | Varies by setup |
+| GPU | Total VRAM | Model Weights (Q4) | KV Cache Budget | Usable Context | Verdict |
+| --- | ---------- | ------------------ | --------------- | -------------- | ------- |
+| **RTX 5090** | 32 GB | ~18 GB | ~12 GB | **~128K tokens** | ✅ Full experience — large contexts work great |
+| **RTX 4090** | 24 GB | ~18 GB | ~4 GB | **~32K tokens** | ⚠️ Works for most tasks, but limited context window |
+| **RTX 3090** | 24 GB | ~18 GB | ~4 GB | **~32K tokens** | ⚠️ Same as 4090 — functional but tight on context |
+| **< 24 GB VRAM** | -- | Model barely fits or won't fit | N/A | Won't run reliably | ❌ Not viable for this model |
+
+> **⚠️ The 24GB reality check:** Even though Q4-K-M weights are "only" ~18 GB, you also need VRAM for the KV cache (stores attention states for every input token). On a 24 GB GPU, after OS overhead + model weights (~20GB), only ~4 GB remains for the KV cache. This caps usable context at roughly **32K tokens** — still plenty for coding tasks, but you can't stuff entire repos into one conversation like on a 5090.
 
 To swap models, update the pull command and alias in `scripts/setup-local.ps1`, then adjust `"id"` in your `chatLanguageModels.json`.
 
@@ -325,7 +353,7 @@ To swap models, update the pull command and alias in `scripts/setup-local.ps1`, 
 | ------------- | --------- |
 | **Thin proxy** over SDK integration | OpenAI-compatible endpoint means zero VS Code changes needed |
 | **Temperature clamping** (≥ 0.6) | Qwen3 thinking mode completely breaks at VS Code's default of 0.1 |
-| **262K context via alias** | Ollama defaults to 32K without it — far too small for real coding sessions |
+| **Large context via alias** | Ollama defaults to 32K without it — but actual usable context depends on your GPU's KV cache headroom (see VRAM section) |
 | **No timeouts** (`timeout=None`) | Complex reasoning can take minutes; let the model finish its thought |
 | **In-memory tracker** | Zero I/O overhead, no database — stats are per-session |
 | **No credentials committed** | No hardcoded IPs, keys, or `.env` files in the repo |
@@ -337,7 +365,7 @@ To swap models, update the pull command and alias in `scripts/setup-local.ps1`, 
 - **🔒 Privacy first** — Your code never leaves your machine. No telemetry, no cloud processing, no data pipelines you don't control
 - **💰 Zero recurring costs** — After the GPU purchase, it's free forever. Enterprise Copilot is $19/user/month; this is $0
 - **⚡ No rate limits** — Generate unlimited tokens. Run parallel coding sessions if your VRAM can handle it
-- **📖 Full context control** — 262K tokens means you can paste entire codebases, large diffs, and complex multi-file refactors without overflow
+- **📖 Large context capacity** — ~128K tokens on a 32GB GPU means you can paste entire codebases, large diffs, and complex multi-file refactors without overflow (24GB GPUs: ~32K)
 - **🌍 Works offline** — No internet required after setup. Great for secure environments, airplanes, and disconnected development
 
 ---
@@ -347,7 +375,7 @@ To swap models, update the pull command and alias in `scripts/setup-local.ps1`, 
 | Symptom | Root Cause | Fix |
 | ------- | ---------- | --- |
 | `ERR_CONNECTION_REFUSED` in VS Code | Proxy not running | Run `\scripts\start-proxy-local.ps1` |
-| Response cuts off mid-reply | `qwen3` alias missing 262K context | Re-run `.\scripts\setup-local.ps1` |
+| Response cuts off mid-reply | VRAM exhausted (KV cache full) or alias misconfigured | Re-run `.\scripts\setup-local.ps1`; lower `maxInputTokens` if on 24GB GPU |
 | `ModuleNotFoundError: fastapi` | System Python instead of `.venv` | Always use `start-proxy-local.ps1` — it calls `.venv\uvicorn.exe` directly |
 | First request takes 20-30 extra seconds | Model not yet in VRAM (cold start) | Run `python scripts\warmup.py` after starting Ollama |
 | `maxOutputTokens` error in VS Code | Output cap too low for thinking mode | Set `"maxOutputTokens": 16000` in config |

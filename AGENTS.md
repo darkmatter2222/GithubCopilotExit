@@ -14,8 +14,7 @@ This repo runs a local AI coding assistant on a Windows machine with an RTX 5090
   Ollama  (Windows install — ollama.com)
         │  PCIe
         ▼
-  RTX 5090  (~18 GB VRAM in use)
-  Model: qwen3 alias → qwen3.6:27b-mtp-q4_K_M, Q4_K_M, 262K context
+  RTX 5090  (~18 GB VRAM for Q4 weights, ~128K tokens usable from KV cache)
 ```
 
 ---
@@ -51,9 +50,9 @@ Live dashboard: **http://localhost:8001/dashboard** — comprehensive command ce
 .\scripts\setup-local.ps1
 ```
 
-Installs Python deps into `.venv`, pulls the model (~18 GB), and creates the `qwen3` alias with 262K context baked in. Run once after cloning.
+Installs Python deps into `.venv`, pulls the model (~18 GB), and creates the `qwen3` alias with large context window (`num_ctx=262144`). Run once after cloning.
 
-**The `qwen3` alias is critical.** Without it, Ollama defaults to 32K context, causing `finish_reason: length` errors on long agentic sessions.
+**The `qwen3` alias is critical.** Without it, Ollama defaults to 32K context, causing `finish_reason: length` errors on long agentic sessions. Actual usable context depends on GPU VRAM — ~128K on RTX 5090 (32GB), ~32K on 24GB GPUs due to KV cache limits.
 
 ---
 
@@ -110,7 +109,7 @@ Unit tests          : NOT APPLICABLE (smoke tests only)
 | Error | Root Cause | Fix |
 |---|---|---|
 | `ERR_CONNECTION_REFUSED` | Proxy not running | Run `start-proxy-local.ps1` |
-| `finish_reason: length` / truncated | `qwen3` alias lacks 262K context | Re-run `setup-local.ps1` |
+| `finish_reason: length` / truncated | VRAM exhausted (KV cache full) or alias misconfigured | Re-run `setup-local.ps1`; lower `maxInputTokens` for 24GB GPUs |
 | `ModuleNotFoundError: fastapi` | System Python instead of .venv | Use `start-proxy-local.ps1` — calls `.venv\uvicorn.exe` directly |
 | First request slow (20-30s extra) | Model not in VRAM | Run `python scripts\warmup.py` after starting Ollama |
 | `maxOutputTokens` error | Cap too low for thinking mode | Set `maxOutputTokens: 16000` in `chatLanguageModels.json` |
