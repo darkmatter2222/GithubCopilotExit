@@ -112,7 +112,7 @@ async def chat_completions(request: Request):
                         "POST", target_url, json=body, headers=headers
                     ) as resp:
                         async for chunk in resp.aiter_bytes():
-                            # Parse SSE data lines to count tokens
+                            # Parse SSE data lines to count tokens & capture usage
                             for line in chunk.split(b"\n"):
                                 decoded = line.strip().decode("utf-8", errors="replace")
                                 if decoded.startswith("data: "):
@@ -121,6 +121,7 @@ async def chat_completions(request: Request):
                                         continue
                                     try:
                                         payload = json.loads(data_part)
+                                        # Count output tokens
                                         choices = payload.get("choices", [])
                                         if choices:
                                             content = (choices[0]
@@ -129,19 +130,38 @@ async def chat_completions(request: Request):
                                             if content:
                                                 token_count += 1
                                                 tracker.record_token(request_id)
-                                    except (json.JSONDecodeError, KeyError, IndexError):
+
+                                        # Capture usage block from final chunk
+                                        usage = payload.get("usage")
+                                        if usage:
+                                            tracker.update_from_response(request_id, payload)
+                                    except (json.JSONDecodeError, KeyError):
                                         pass
                             yield chunk
+            except Exception as exc:
+                log.error(f"[{request_id}] error: {exc}")
+                tracker.record_error(request_id, str(exc))
+                return
             finally:
-                log.info(
-                    f"[{request_id}] completed — {token_count} tokens generated"
-                )
-                tracker.finish_request(request_id)
+                if token_count > 0 or request_id in tracker._requests:
+                    log.info(
+                        f"[{request_id}] completed — {token_count} tokens generated"
+                    )
+                    tracker.finish_request(request_id)
 
         return StreamingResponse(generate(), media_type="text/event-stream")
 
     async with httpx.AsyncClient(timeout=None) as client:
         resp = await client.post(target_url, json=body, headers=headers)
+        # Capture usage from non-streamed chat response too
+        request_id = tracker.new_request_id()
+        tracker.start_request(request_id, SERVED_MODEL)
+        try:
+            resp_json = json.loads(resp.content) if resp.content else {}
+            tracker.update_from_response(request_id, resp_json)
+        except (json.JSONDecodeError, KeyError):
+            pass
+        tracker.finish_request(request_id)
         return Response(
             content=resp.content,
             status_code=resp.status_code,
@@ -200,86 +220,14 @@ async def stats_json():
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def stats_dashboard():
-    """Live-updating HTML dashboard showing real-time token throughput."""
-    return DASHBOARD_HTML_PAGE
-
-
-DASHBOARD_HTML_PAGE = """<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8"/>
-<title>LLM Proxy — Live Token Throughput</title>
-<style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0d1117; color: #e6edf3; padding: 24px; min-height: 100vh; }
-  h1 { font-size: 1.4rem; margin-bottom: 4px; }
-  .subtitle { color: #8b949e; font-size: 0.85rem; margin-bottom: 20px; }
-  .card { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 20px; margin-bottom: 16px; }
-  .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; }
-  .metric h2 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; color: #8b949e; margin-bottom: 6px; }
-  .metric .value { font-size: 2.2rem; font-weight: 700; }
-  .metric.highlight .value { color: #58a6ff; }
-  table { width: 100%; border-collapse: collapse; }
-  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid #21262d; font-size: 0.85rem; }
-  th { color: #8b949e; text-transform: uppercase; font-size: 0.7rem; letter-spacing: 0.05em; }
-  .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; }
-  .badge-active { background: #124a1c; color: #3fb950; }
-  .badge-done   { background: #1f2937; color: #8b949e; }
-</style>
-</head>
-<body>
-  <h1>&#x1f4ca; Live Token Throughput</h1>
-  <p class="subtitle">Auto-refreshes every 2 seconds · http://localhost:8001/dashboard</p>
-
-  <div class="card metrics">
-    <div class="metric highlight">
-      <h2>Combined Tokens/sec</h2>
-      <div class="value" id="tps">&#8212;</div>
-    </div>
-    <div class="metric">
-      <h2>Active Requests</h2>
-      <div class="value" id="active">&#8212;</div>
-    </div>
-    <div class="metric">
-      <h2>Total Tokens This Session</h2>
-      <div class="value" id="total">&#8212;</div>
-    </div>
-  </div>
-
-  <div class="card">
-    <table>
-      <thead><tr><th>ID</th><th>Model</th><th>Tokens</th><th>TPS</th><th>Status</th></tr></thead>
-      <tbody id="requests-table"><tr><td colspan="5" style="color:#8b949e;text-align:center;">waiting&#x2026;</td></tr></tbody>
-    </table>
-  </div>
-
-<script>
-async function refresh() {
-  try {
-    const res = await fetch('/stats');
-    const data = await res.json();
-    document.getElementById('tps').textContent = (data.combined_tps ?? 0).toFixed(1);
-    document.getElementById('active').textContent = data.active_requests;
-    document.getElementById('total').textContent = data.total_tokens_generated.toLocaleString();
-    const tbody = document.getElementById('requests-table');
-    if (!data.requests || data.requests.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="5" style="color:#8b949e;text-align:center;">waiting&#x2026;</td></tr>';
-      return;
-    }
-    tbody.innerHTML = data.requests.map(r =>
-      `<tr>
-        <td>${r.id}</td><td>${r.model}</td><td>${r.tokens_out}</td>
-        <td>${(r.tps||0).toFixed(1)}</td>
-        <td>${r.active ? '<span class="badge badge-active">live</span>' : '<span class="badge badge-done">done</span>'}</td>
-      </tr>`
-    ).join('');
-  } catch(e) { console.warn('refresh error', e); }
-}
-refresh();
-setInterval(refresh, 2000);
-</script>
-</body>
-</html>"""
+    """Comprehensive command-center dashboard — live charts, event log, history."""
+    try:
+        d = os.path.dirname(__file__)
+        with open(os.path.join(d, "dashboard.html"), encoding="utf-8") as fhtml:
+            return fhtml.read()
+    except FileNotFoundError:
+        # Fallback: tiny page telling user to restart
+        return HTMLResponse('<h1>Dashboard template not found</h1><p>Restart proxy to load new dashboard.</p>')
 
 
 @app.get("/health")

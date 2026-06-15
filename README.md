@@ -1,103 +1,69 @@
 # Copilot-Local — Private AI Coding Assistant on Your Own GPU
 
-Run **Qwen3.6 27B** locally on your RTX 5090. Zero API costs. Full 262K context. Native tool calling and vision. Works exactly like GitHub Copilot but runs entirely on your hardware.
+Run **Qwen3.6 27B** on your RTX 5090. Zero API costs. Full 262K context. Thinking mode. Tool calling. Vision. Works in any VS Code project.
 
 ---
 
-## How It Works
+## Every Time You Boot Up — Start Here
 
+You need two things running before VS Code can use the model:
+
+1. **Ollama** (serves the model) — auto-starts with Windows. If it's not running:
+   ```powershell
+   ollama serve
+   ```
+
+2. **The proxy** (connects VS Code to Ollama) — run this every session:
+   ```powershell
+   cd C:\path\to\GithubCopilotExit
+   .\scripts\start-proxy-local.ps1
+   ```
+   Keep this terminal open. It logs every request as you code.
+
+That's it. Open VS Code, open Copilot Chat, select **"Qwen3.6-27B (RTX 5090)"** from the model picker, and start coding.
+
+---
+
+## Verify It's Working
+
+```powershell
+Invoke-RestMethod http://localhost:8001/health
+# → status: ok, ollama: True   ✅
 ```
-  VS Code Copilot Chat
-        │
-        │  OpenAI-compatible API  (localhost:8001)
-        ▼
-  ┌─────────────────────────────┐
-  │   FastAPI Proxy              │  proxy/main.py  — runs on YOUR machine
-  │   • Clamps temp to >= 0.6   │  (Qwen3 thinking mode needs this)
-  │   • Rewrites model name     │
-  │   • Tracks token TPS live   │
-  │   • /dashboard (live stats) │
-  └────────────┬────────────────┘
-               │  localhost:11434
-               ▼
-  ┌─────────────────────────────┐
-  │   Ollama (local)             │  ollama.com — runs on YOUR machine
-  │   model: qwen3 alias         │
-  │   (262K context baked in)    │
-  └────────────┬────────────────┘
-               │  PCIe / NVLink
-               ▼
-     RTX 5090  (local GPU)
-     qwen3.6:27b-mtp-q4_K_M  (~18 GB VRAM)
-```
 
-Everything runs on your machine. No cloud. No subscription. No data leaves your box.
+Open **http://localhost:8001/dashboard** in a browser for a full command-center view while the model is generating. The dashboard auto-refreshes every 2 seconds and shows:
+
+- **Session stats** — uptime, total requests, success/error counts
+- **Throughput meter** — live TPS, active requests, total input & output tokens
+- **TPS sparkline chart** — rolling token-per-second graph (last ~2 min)
+- **Input vs Output bars** — per-request token breakdown for recent sessions
+- **Active request table** — real-time token counts and elapsed time
+- **Request history** — full log of completed requests with timing
+- **Event log** — timestamped INFO/ERROR feed for debugging
 
 ---
 
-## Prerequisites
-
-1. **Windows** with an RTX 5090 (or any NVIDIA GPU with 24 GB+ VRAM)
-2. **Ollama** installed: https://ollama.com (just download and run the installer)
-3. **Python 3.12+** installed: https://python.org
-4. **VS Code** with the GitHub Copilot extension
-
----
-
-## First-Time Setup (Run Once)
+## First-Time Setup (Run Once After Cloning)
 
 ```powershell
 git clone https://github.com/darkmatter2222/GithubCopilotExit.git
 cd GithubCopilotExit
-
-# One-time setup: installs deps, pulls model (~18 GB), creates qwen3 alias
 .\scripts\setup-local.ps1
 ```
 
 `setup-local.ps1` will:
 1. Create `.venv` and install Python dependencies
-2. Verify Ollama is running (`ollama serve` must be active)
-3. Pull `qwen3.6:27b-mtp-q4_K_M` (18 GB — only downloads once)
+2. Verify Ollama is installed and running
+3. Pull `qwen3.6:27b-mtp-q4_K_M` — **~18 GB download, one time only**
 4. Create the `qwen3` alias with 262K context baked in
 
-**The alias is required.** Using the raw model name gives only 32K context, which causes `finish_reason: length` errors during long agentic sessions.
+**The alias matters.** Without it, the model runs with only 32K context window, causing responses to get cut off mid-thought on long agentic tasks.
 
 ---
 
-## Starting the Stack (Every Session)
+## VS Code Configuration
 
-### Step 1 — Make sure Ollama is running
-
-Ollama starts automatically with Windows if you used the installer. If not:
-
-```powershell
-ollama serve
-```
-
-Verify: http://localhost:11434 should respond.
-
-### Step 2 — Start the proxy
-
-```powershell
-.\scripts\start-proxy-local.ps1
-```
-
-This starts the FastAPI proxy at **http://localhost:8001**. Keep this terminal open — it streams request logs as you use the model.
-
-### Step 3 — Verify
-
-```powershell
-Invoke-RestMethod http://localhost:8001/health
-# → status: ok, ollama: True
-```
-
-Open **http://localhost:8001/dashboard** in your browser for live token throughput.
-
----
-
-## VS Code Setup
-
-Edit `%APPDATA%\Code\User\chatLanguageModels.json`:
+Edit `%APPDATA%\Code\User\chatLanguageModels.json` — do this once:
 
 ```jsonc
 [
@@ -121,45 +87,61 @@ Edit `%APPDATA%\Code\User\chatLanguageModels.json`:
 ]
 ```
 
-**Why `maxOutputTokens: 16000`?** Qwen3 burns 5K-15K tokens on its internal `<think>` monologue before writing output. 16K gives plenty of room without wasting context.
+After saving, reload VS Code. The model will appear in the Copilot Chat model picker.
 
 ---
 
-## Live Dashboard
-
-While the proxy is running, open **http://localhost:8001/dashboard** in any browser:
-
-- Combined tokens/sec across all active requests
-- Per-request token count and TPS
-- Total tokens generated this session
-
----
-
-## Project Structure
+## How It Works
 
 ```
-copilot-local/
+  VS Code Copilot Chat
+        │
+        │  http://localhost:8001  (OpenAI-compatible API)
+        ▼
+  FastAPI Proxy  ──  proxy/main.py
+        │  Clamps temperature to >= 0.6 (Qwen3 thinking mode requires this)
+        │  Rewrites model name to "qwen3"
+        │  Tracks token throughput for dashboard
+        │
+        │  http://localhost:11434
+        ▼
+  Ollama  (local install)
+        │  model alias: qwen3  (262K context)
+        │
+        │  PCIe
+        ▼
+  RTX 5090  ─  ~18 GB VRAM in use
+  qwen3.6:27b-mtp-q4_K_M (Q4_K_M quantization)
+```
+
+Everything is local. No cloud. No API key. No data leaves your machine.
+
+---
+
+## Project Files
+
+```
+GithubCopilotExit/
 ├── proxy/
-│   ├── main.py              # FastAPI proxy — temp clamping, routing, dashboard
+│   ├── main.py              # FastAPI proxy — the core of this stack
 │   ├── tracker.py           # Real-time token throughput tracker (in-memory)
-│   ├── requirements.txt     # fastapi, uvicorn, httpx
-│   └── Dockerfile           # Optional: containerize the proxy
+│   └── requirements.txt     # fastapi, uvicorn, httpx
 ├── scripts/
 │   ├── setup-local.ps1      # ONE-TIME: install deps, pull model, create alias
-│   ├── start-proxy-local.ps1 # START THIS every session before using VS Code
-│   ├── test-proxy.py        # Smoke test: health check + sample chat request
-│   └── warmup.py            # Pre-load model into VRAM after Ollama starts
-└── AGENTS.md                # Stack reference for AI coding agents
+│   ├── start-proxy-local.ps1 # RUN EVERY SESSION: starts the proxy
+│   ├── test-proxy.py        # Smoke test: health check + sample inference
+│   └── warmup.py            # Pre-loads model into VRAM after cold start
+└── AGENTS.md                # This stack's reference doc for AI coding agents
 ```
 
 ---
 
-## Known Issues
+## Troubleshooting
 
-| Error | Cause | Fix |
+| Symptom | Cause | Fix |
 |---|---|---|
 | `ERR_CONNECTION_REFUSED` in VS Code | Proxy not running | Run `.\scripts\start-proxy-local.ps1` |
-| `finish_reason: length` / truncated responses | `qwen3` alias missing 262K context | Re-run `.\scripts\setup-local.ps1` |
-| `ModuleNotFoundError: fastapi` | Wrong Python / venv not active | Use the proxy via `start-proxy-local.ps1` (calls `.venv\uvicorn.exe` directly) |
-| First request is slow | Model not in VRAM yet | Run `python scripts\warmup.py` after starting Ollama |
-| `maxOutputTokens` error in VS Code | Cap too low for thinking mode | Set `maxOutputTokens` to 16000 in `chatLanguageModels.json` |
+| Response cuts off mid-reply | `qwen3` alias missing 262K context | Re-run `.\scripts\setup-local.ps1` |
+| `ModuleNotFoundError: fastapi` when starting proxy | Wrong Python / venv issue | Always use `start-proxy-local.ps1` — it calls `.venv\uvicorn.exe` directly |
+| First request takes 20-30 extra seconds | Model not yet in VRAM | Run `python scripts\warmup.py` once after Ollama starts |
+| `maxOutputTokens` error in VS Code | Output cap too low for thinking mode | Set `"maxOutputTokens": 16000` in `chatLanguageModels.json` |

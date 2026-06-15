@@ -6,22 +6,21 @@ Tracks active requests, token counts, and computes tokens/sec in real time.
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Dict
-
 
 @dataclass
 class RequestStats:
     request_id: str
     model: str
     start_time: float = field(default_factory=time.time)
-    prompt_tokens: int = 0
-    completion_tokens: int = 0
+    finish_time: float = 0.0
+    prompt_tokens: int = 0          # input / context tokens
+    completion_tokens: int = 0      # output tokens (accumulated during stream)
     prompt_eval_count: int = 0
     prompt_eval_duration_ns: int = 0
-    eval_count: int = 0
+    eval_count: int = 0             # streamed token count
     eval_duration_ns: int = 0
-    first_token_time: float = 0.0
-    last_token_time: float = 0.0
+    first_token_time: float = 0.0   # wall-clock of first output token
+    last_token_time: float = 0.0    # wall-clock of last output token
     finished: bool = False
 
     @property
@@ -49,84 +48,190 @@ class RequestStats:
 class TokenTracker:
     """Thread-safe tracker for live token throughput across all requests."""
 
+    MAX_HISTORY = 50          # completed requests to keep
+    MAX_EVENTS = 100          # event log cap
+    MAX_TPS_POINTS = 60       # time-series chart window (~2 min at 2-s poll)
+
     def __init__(self):
         self._lock = threading.Lock()
-        self._requests: Dict[str, RequestStats] = {}
-        self._request_counter = 0
+        self._requests: dict = {}         # id → RequestStats
+        self._history: list = []          # finished requests, newest first
+        self.session_start_time = time.time()
+        self.success_count = 0
+        self.error_count = 0
+        self.tps_history: list = []       # [{ts, value}]
+        self.events: list = []            # [{ts, level, message}]
 
+    def _log_event(self, level: str, message: str) -> None:
+        """Append event (caller must hold lock)."""
+        self.events.append({
+            "ts": time.time(),
+            "time": time.strftime("%H:%M:%S"),
+            "level": level,    # INFO | WARN | ERROR
+            "message": message,
+        })
+        # Trim oldest when overflowing
+        while len(self.events) > self.MAX_EVENTS:
+            self.events.pop(0)
+
+    # ── lifecycle ────────────────────────────────────────────────
     def new_request_id(self) -> str:
         with self._lock:
-            self._request_counter += 1
-            rid = f"req-{self._request_counter}"
-        return rid
-
-    def record_token(self, request_id: str) -> None:
-        """Call on each streamed token to update live stats."""
-        now = time.time()
-        with self._lock:
-            stats = self._requests.get(request_id)
-            if not stats:
-                return
-            stats.eval_count += 1
-            stats.last_token_time = now
-            if stats.first_token_time == 0.0:
-                stats.first_token_time = now
-
-    def update_from_response(self, request_id: str, response: dict) -> None:
-        """Parse usage stats from Ollama's non-streamed response."""
-        with self._lock:
-            stats = self._requests.get(request_id)
-            if not stats:
-                return
-            usage = response.get("usage", {})
-            stats.prompt_tokens = usage.get("prompt_tokens", 0)
-            stats.completion_tokens = usage.get("completion_tokens", 0)
-            # Ollama may also send these fields directly in the response
-            stats.eval_count = max(stats.eval_count, stats.completion_tokens, 
-                                   response.get("eval_count", 0))
-            stats.eval_duration_ns = response.get("eval_duration", 0)
-            stats.prompt_eval_count = response.get("prompt_eval_count", 0)
-            stats.prompt_eval_duration_ns = response.get(
-                "prompt_eval_duration", 0)
-
-    def finish_request(self, request_id: str) -> None:
-        with self._lock:
-            stats = self._requests.get(request_id)
-            if stats:
-                stats.finished = True
+            return f"req-{len(self._requests)}"
 
     def start_request(self, request_id: str, model: str) -> None:
         with self._lock:
             self._requests[request_id] = RequestStats(
                 request_id=request_id, model=model
             )
+            self._log_event("INFO", f"{request_id} {model} started")
 
-    def get_active_summary(self) -> dict:
-        """Return real-time summary of all active requests and totals."""
+    def record_token(self, request_id: str) -> None:
+        """Call once per output token arriving from stream."""
         now = time.time()
         with self._lock:
-            active = [s for s in self._requests.values() if not s.finished]
-            # Only count TPS from requests that had a token in the last 10 seconds
+            s = self._requests.get(request_id)
+            if not s:
+                return
+            s.eval_count += 1
+            s.completion_tokens += 1
+            s.last_token_time = now
+            if s.first_token_time == 0.0:
+                s.first_token_time = now
+
+    def update_from_response(self, request_id: str, response: dict) -> None:
+        """Merge usage block from Ollama final chunk / non-streamed reply."""
+        with self._lock:
+            s = self._requests.get(request_id)
+            if not s:
+                return
+            usage = response.get("usage", {})
+            s.prompt_tokens = usage.get("prompt_tokens", 0)
+            # Keep the streamed count OR the usage block count, whichever is higher
+            ct = max(s.completion_tokens, usage.get("completion_tokens", 0), s.eval_count)
+            s.completion_tokens = ct
+            s.eval_count = max(s.eval_count, ct)
+            # Optional timing hints from Ollama
+            s.prompt_eval_count = usage.get("prompt_eval_count", s.prompt_eval_count)
+            s.prompt_eval_duration_ns = usage.get("prompt_eval_duration_ns",
+                                                  s.prompt_eval_duration_ns)
+            s.eval_duration_ns = usage.get("eval_duration_ns", s.eval_duration_ns)
+
+    def record_error(self, request_id: str, message: str) -> None:
+        with self._lock:
+            s = self._requests.get(request_id)
+            if s:
+                s.finished = True
+                s.finish_time = time.time()
+            self.error_count += 1
+            # Store in history too
+            self._history.insert(0, {
+                "id": request_id,
+                "model": s.model if s else "?",
+                "prompt_tokens": s.prompt_tokens if s else 0,
+                "output_tokens": max(s.completion_tokens, s.eval_count) if s else 0,
+                "duration": round((time.time() - s.start_time), 1) if s else 0,
+                "active": False,
+                "error": message,
+            })
+            self._log_event("ERROR", f"{request_id}: {message}")
+
+    def finish_request(self, request_id: str) -> None:
+        with self._lock:
+            s = self._requests.pop(request_id, None)
+            if not s:
+                return
+            s.finished = True
+            s.finish_time = time.time()
+            self.success_count += 1
+            dur = s.finish_time - s.start_time
+            out = max(s.completion_tokens, s.eval_count)
+            in_t = s.prompt_tokens
+            # Push to history
+            entry = {
+                "id": s.request_id,
+                "model": s.model,
+                "prompt_tokens": in_t,
+                "output_tokens": out,
+                "total_tokens": in_t + out,
+                "duration": round(dur, 1),
+                "ttft": round(s.first_token_time - s.start_time, 2) if s.first_token_time else 0,
+                "tps": round(s.tps_since_first_token, 1),
+                "active": False,
+            }
+            self._history.insert(0, entry)
+            while len(self._history) > self.MAX_HISTORY:
+                self._history.pop()
+
+            self._log_event("INFO",
+                            f"{s.request_id} done · {in_t} in / {out} out · {dur:.1f}s")
+
+    # ── chart helper (no external lock needed, called from get_active_summary) ──
+    def _snapshot_tps(self) -> None:
+        now = time.time()
+        active = [s for s in self._requests.values() if not s.finished and s.last_token_time > 0]
+        combined = sum(s.tps_since_first_token for s in active)
+        self.tps_history.append({"ts": now, "value": round(combined, 1)})
+        # Slide window
+        while len(self.tps_history) > self.MAX_TPS_POINTS:
+            self.tps_history.pop(0)
+
+    # ── main read endpoint ───────────────────────────────────────
+    def get_active_summary(self) -> dict:
+        now = time.time()
+        with self._lock:
+            active_list = [s for s in self._requests.values() if not s.finished]
             recent = [s for s in self._requests.values()
                       if not s.finished and (now - s.last_token_time) < 10]
 
             combined_tps = sum(s.tps_since_first_token for s in recent)
+            total_in = sum(s.prompt_tokens for s in self._requests.values())
+            total_out = sum(max(s.completion_tokens, s.eval_count)
+                           for s in self._requests.values())
+            # Add history totals
+            for h in self._history:
+                total_in += h.get("prompt_tokens", 0)
+                total_out += h.get("output_tokens", 0)
 
-            total_tokens = sum(s.eval_count for s in self._requests.values())
+            self._snapshot_tps()
+
+            active_summaries = []
+            for s in active_list:
+                out = max(s.completion_tokens, s.eval_count)
+                elapsed = now - s.start_time
+                active_summaries.append({
+                    "id": s.request_id,
+                    "model": s.model,
+                    "prompt_tokens": s.prompt_tokens,
+                    "output_tokens": out,
+                    "tps": round(s.tps_since_first_token, 1),
+                    "elapsed": round(elapsed, 1),
+                })
 
             return {
-                "active_requests": len(active),
+                # session-level
+                "session_uptime_s": round(now - self.session_start_time),
+                "total_requests": len(self._history) + len(active_list),
+                "success_count": self.success_count,
+                "error_count": self.error_count,
+                "active_requests": len(active_list),
+
+                # throughput
                 "combined_tps": round(combined_tps, 1),
-                "total_tokens_generated": total_tokens,
-                "requests": [
-                    {
-                        "id": s.request_id,
-                        "model": s.model,
-                        "tokens_out": s.eval_count,
-                        "tps": round(s.tps_since_first_token, 1),
-                        "active": not s.finished,
-                    }
-                    for s in reversed(list(self._requests.values())[-20:])
-                ],
+                "total_input_tokens": total_in,
+                "total_output_tokens": total_out,
+
+                # charts
+                "tps_history": list(self.tps_history),
+                "io_series": [h for h in self._history[:15] if h.get("prompt_tokens") or h.get("output_tokens")],
+
+                # event log (newest first)
+                "events": list(reversed(self.events)),
+
+                # active detail
+                "active_requests_detail": active_summaries,
+
+                # recent history
+                "history": self._history[:self.MAX_HISTORY],
             }
 

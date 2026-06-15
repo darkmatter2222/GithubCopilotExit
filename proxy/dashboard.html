@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>LLM Proxy — Command Center</title>
+<style>
+  /* ── reset & base ──────────────────────────────────── */
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  :root{
+    --bg:#0b0e14;--card:#131720;--border:#1e2638;
+    --text:#c9d1d9;--muted:#5f6a7e;--green:#3fb950;
+    --red:#f85149;--blue:#58a6ff;--gold:#d29922;
+  }
+  body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);padding:0;margin:0}
+
+  /* header */
+  .header{background:linear-gradient(135deg,#161c2a,#0d1220);border-bottom:1px solid var(--border);padding:20px 32px;display:flex;align-items:center;justify-content:space-between}
+  .header h1{font-size:1.3rem;font-weight:700;color:#e6edf3}
+  .header h1 span{opacity:.5;font-weight:400;margin-left:8px;font-size:.9rem}
+  .live-dot{width:10px;height:10px;background:var(--green);border-radius:50%;display:inline-block;animation:pulse 2s infinite;margin-right:8px}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+
+  /* grid */
+  .container{max-width:1440px;margin:0 auto;padding:24px}
+  .section-title{font-size:.7rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:12px;font-weight:600}
+
+  /* metric cards */
+  .metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;margin-bottom:28px}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px;position:relative;overflow:hidden}
+  .card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--blue),transparent)}
+  .card h3{font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:8px;font-weight:500}
+  .card .val{font-size:2.4rem;font-weight:800;line-height:1}
+  .card .sub{font-size:.75rem;color:var(--muted);margin-top:6px}
+  .card.error-card::before{background:linear-gradient(90deg,var(--red),transparent)}
+  .card.success-card::before{background:linear-gradient(90deg,var(--green),transparent)}
+
+  /* two-column layout */
+  .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:28px}
+
+  /* table */
+  .panel{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px}
+  table{width:100%;border-collapse:collapse}
+  th{color:var(--muted);font-size:.68rem;text-transform:uppercase;letter-spacing:.05em;padding:10px 8px;text-align:left;border-bottom:1px solid var(--border)}
+  td{padding:10px 8px;font-size:.82rem;border-bottom:1px solid #1a1f2e}
+  tr:last-child td{border-bottom:none}
+
+  /* badges */
+  .badge{display:inline-block;padding:2px 10px;border-radius:10px;font-size:.72rem;font-weight:600}
+  .b-live{background:#12332a;color:var(--green)}
+  .b-done{background:#1c2333;color:var(--muted)}
+  .b-err{background:#3d1f1f;color:var(--red)}
+
+  /* charts */
+  canvas{width:100%;height:220px;border-radius:8px;background:#0e121a}
+
+  /* event log */
+  .log-container{max-height:340px;overflow-y:auto;font-family:'Consolas','Courier New',monospace;font-size:.78rem}
+  .log-line{padding:6px 10px;border-bottom:1px solid #151922;display:flex;gap:10px}
+  .log-time{color:var(--muted);white-space:nowrap;min-width:65px}
+  .log-level{font-weight:700;min-width:40px;text-align:center}
+  .log-msg{flex:1;color:var(--text)}
+  .lvl-INFO{color:var(--blue)}
+  .lvl-WARN{color:var(--gold)}
+  .lvl-ERROR{color:var(--red)}
+
+  /* scrollbar */
+  ::-webkit-scrollbar{width:6px}
+  ::-webkit-scrollbar-track{background:transparent}
+  ::-webkit-scrollbar-thumb{background:#2a3040;border-radius:3px}
+
+  @media(max-width:850px){.grid-2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1><span class="live-dot"></span>Command Center<span>localhost:8001</span></h1>
+  <div id="clock" style="font-size:.8rem;color:var(--muted)"></div>
+</div>
+
+<div class="container">
+
+  <!-- ── Session Overview ─────────────────────────── -->
+  <p class="section-title">Session Overview</p>
+  <div class="metrics" id="overview-cards">
+    <div class="card success-card"><h3>Uptime</h3><div class="val" id="uptime">&mdash;</div></div>
+    <div class="card"><h3>Total Requests</h3><div class="val" id="totreq">&mdash;</div></div>
+    <div class="card success-card"><h3>Successful</h3><div class="val" id="succcnt">&mdash;</div></div>
+    <div class="card error-card"><h3>Errors</h3><div class="val" id="errcnt" style="color:var(--red)">&mdash;</div></div>
+  </div>
+
+  <!-- ── Throughput ───────────────────────────────── -->
+  <p class="section-title">Throughput</p>
+  <div class="metrics" id="throughput-cards">
+    <div class="card"><h3>Live TPS</h3><div class="val" style="color:var(--blue)" id="tps">&mdash;</div></div>
+    <div class="card"><h3>Active Requests</h3><div class="val" id="active">&mdash;</div></div>
+    <div class="card"><h3>Total Input Tokens</h3><div class="val" id="intok">&mdash;</div></div>
+    <div class="card"><h3>Total Output Tokens</h3><div class="val" id="outtok">&mdash;</div></div>
+  </div>
+
+  <!-- ── Charts Row ─────────────────────────────── -->
+  <p class="section-title">Charts</p>
+  <div class="grid-2">
+    <div class="panel">
+      <h3 style="font-size:.8rem;margin-bottom:10px;color:var(--muted);text-transform:uppercase;">Tokens / Second (Live)</h3>
+      <canvas id="tpsChart" height="220"></canvas>
+    </div>
+    <div class="panel">
+      <h3 style="font-size:.8rem;margin-bottom:10px;color:var(--muted);text-transform:uppercase;">Input vs Output (Recent 15 Requests)</h3>
+      <canvas id="ioChart" height="220"></canvas>
+    </div>
+  </div>
+
+  <!-- ── Active + History ───────────────────────── -->
+  <p class="section-title">Requests</p>
+  <div class="grid-2" style="margin-bottom:28px">
+    <div class="panel">
+      <h3 style="font-size:.8rem;margin-bottom:10px;color:var(--muted);text-transform:uppercase;">Active Now</h3>
+      <table>
+        <thead><tr><th>ID</th><th>Tokens Out</th><th>TPS</th><th>Elapsed</th></tr></thead>
+        <tbody id="active-table"><tr><td colspan="4" style="text-align:center;color:var(--muted)">None active</td></tr></tbody>
+      </table>
+    </div>
+    <div class="panel">
+      <h3 style="font-size:.8rem;margin-bottom:10px;color:var(--muted);text-transform:uppercase;">Recent History</h3>
+      <table>
+        <thead><tr><th>ID</th><th>In / Out</th><th>Duration</th></tr></thead>
+        <tbody id="hist-table"><tr><td colspan="3" style="text-align:center;color:var(--muted)">No history yet</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ── Event Log ──────────────────────────────── -->
+  <p class="section-title">Event Log</p>
+  <div class="panel" style="margin-bottom:32px">
+    <div class="log-container" id="ev-log">
+      <div style="text-align:center;color:var(--muted);padding:20px">loading log&hellip;</div>
+    </div>
+  </div>
+
+</div><!-- /container -->
+
+<!-- ═══════ JS ═══════════════════════════════════════════ -->
+<script>
+const $=id=>document.getElementById(id);
+
+/* ── clock ─────────────────────────────────────── */
+function tickClock(){ $('clock').textContent=new Date().toLocaleTimeString()}
+setInterval(tickClock,1000);tickClock();
+
+/* ── uptime formatter ──────────────────────────── */
+function fmtUptime(s){const h=Math.floor(s/3600),m=Math.floor(s/60)%60,sec=s%60;return `${h}h ${String(m).padStart(2,'0')}m ${String(sec).padStart(2,'0')}s`}
+
+/* ── number format ─────────────────────────────── */
+const nf=n=>n?.toLocaleString()??'—';
+
+/* ============================================================
+   Mini sparkline canvas chart library
+   ============================================================ */
+function drawLineChart(canvasId, dataPoints, color='#58a6ff', maxPoints=60) {
+  const c=$(canvasId); if(!c)return;
+  const ctx=c.getContext('2d');
+  const W=c.width=c.offsetWidth*2;  // retina
+  const H=c.height=c.offsetHeight*2;
+  ctx.clearRect(0,0,W,H);
+
+  if(dataPoints.length<2){
+    ctx.fillStyle='#5f6a7e';ctx.font='40px sans-serif';ctx.textAlign='center';
+    ctx.fillText('waiting…',W/2,H/2+10);return;
+  }
+
+  const slice=dataPoints.slice(-maxPoints);
+  const vals=slice.map(d=>d.value??0);
+  const max=Math.max(...vals,1);
+  const pad=30, chartH=H-60, chartW=W-pad*2;
+  const stepX=chartW/Math.max(vals.length-1,1);
+
+  // gradient fill
+  const grad=ctx.createLinearGradient(0,0,0,H);
+  grad.addColorStop(0,color+'55');grad.addColorStop(1,color+'05');
+
+  ctx.beginPath();
+  ctx.moveTo(pad,H-20);
+  vals.forEach((v,i)=>{
+    const x=pad+i*stepX;
+    const y=H-20-(v/max)*chartH;
+    ctx.lineTo(x,y);
+  });
+  ctx.lineTo(pad+Math.max(vals.length-1,1)*stepX,H-20);
+  ctx.closePath();ctx.fillStyle=grad;ctx.fill();
+
+  // line
+  ctx.beginPath();
+  vals.forEach((v,i)=>{
+    const x=pad+i*stepX;const y=H-20-(v/max)*chartH;
+    i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+  });
+  ctx.strokeStyle=color;ctx.lineWidth=2.5;ctx.stroke();
+
+  // label max
+  ctx.fillStyle='#8b949e';ctx.font='36px sans-serif';ctx.textAlign='right';
+  ctx.fillText(Math.max(...vals).toFixed(1)+' tps',W-10,26);
+}
+
+function drawBarChart(canvasId, ioData) {
+  const c=$(canvasId); if(!c)return;
+  const ctx=c.getContext('2d');
+  const W=c.width=c.offsetWidth*2;
+  const H=c.height=c.offsetHeight*2;
+  ctx.clearRect(0,0,W,H);
+
+  if(!ioData||ioData.length===0){
+    ctx.fillStyle='#5f6a7e';ctx.font='40px sans-serif';ctx.textAlign='center';
+    ctx.fillText('no data yet',W/2,H/2+10);return;
+  }
+
+  const slice=ioData.slice(-12).reverse();
+  const max=Math.max(...slice.map(d=>Math.max(d.prompt||0,d.output||0)),1);
+  const pad=50, chartH=H-70;
+  const groupW=(W-pad*2)/slice.length;
+  const barW=groupW*0.3;
+
+  slice.forEach((d,i)=>{
+    const gx=pad+i*groupW;
+    // prompt bar (blue)
+    const ph=(d.prompt/max)*chartH;
+    ctx.fillStyle='#58a6ff';
+    ctx.fillRect(gx+groupW*0.1, H-30-ph, barW, ph);
+    // output bar (green)
+    const oh=(d.output/max)*chartH;
+    ctx.fillStyle='#3fb950';
+    ctx.fillRect(gx+groupW*0.1+barW+4, H-30-oh, barW, oh);
+    // label
+    ctx.fillStyle='#5f6a7e';ctx.font='28px sans-serif';ctx.textAlign='center';
+    ctx.fillText(d.id,gx+groupW/2,H-8);
+  });
+
+  // legend
+  ctx.font='32px sans-serif';
+  ctx.fillStyle='#58a6ff';ctx.fillRect(10,14,18,18);ctx.fillText('Input',36,30);
+  ctx.fillStyle='#3fb950';ctx.fillRect(70,14,18,18);ctx.fillText('Output',106,30);
+}
+
+/* ============================================================ */
+
+async function refresh() {
+  try {
+    const res=await fetch('/stats');
+    const d=await res.json();
+
+    // Session overview
+    $('uptime').textContent=d.session_uptime_s ? fmtUptime(d.session_uptime_s) : '—';
+    $('totreq').textContent=nf(d.total_requests);
+    $('succcnt').textContent=nf(d.success_count);
+    $('errcnt').textContent=nf(d.error_count);
+
+    // Throughput
+    $('tps').textContent=(d.combined_tps??0).toFixed(1);
+    $('active').textContent=d.active_requests;
+    $('intok').textContent=nf(d.total_input_tokens);
+    $('outtok').textContent=nf(d.total_output_tokens);
+
+    // TPS chart
+    drawLineChart('tpsChart', d.tps_history||[], '#58a6ff');
+
+    // IO bar chart
+    drawBarChart('ioChart', d.io_series||[]);
+
+    // Active table
+    const at=$('active-table');
+    if(!d.active_requests_detail||d.active_requests_detail.length===0){
+      at.innerHTML='<tr><td colspan="4" style="text-align:center;color:#5f6a7e">Idle</td></tr>';
+    } else {
+      at.innerHTML=d.active_requests_detail.map(r=>`
+        <tr>
+          <td>${r.id}</td>
+          <td>${nf(r.output_tokens)} / ${nf(r.prompt_tokens)} in</td>
+          <td>${(r.tps||0).toFixed(1)}</td>
+          <td>${r.elapsed}s</td>
+        </tr>`).join('');
+    }
+
+    // History table
+    const ht=$('hist-table');
+    if(!d.history||d.history.length===0){
+      ht.innerHTML='<tr><td colspan="3" style="text-align:center;color:#5f6a7e">No history yet</td></tr>';
+    } else {
+      ht.innerHTML=d.history.slice(0,20).map(r=>`
+        <tr>
+          <td>${r.id}</td>
+          <td>${nf(r.prompt_tokens)} in / ${nf(r.output_tokens)} out</td>
+          <td>${r.duration?.toFixed(1)||'?'}s${r.error?' <span class="badge b-err">'+r.error.slice(0,30)+'</span>':''}</td>
+        </tr>`).join('');
+    }
+
+    // Event log (newest on top)
+    const el=$('ev-log');
+    if(!d.events||d.events.length===0){
+      el.innerHTML='<div style="text-align:center;color:#5f6a7e;padding:20px">No events yet</div>';
+    } else {
+      el.innerHTML=d.events.slice(0,100).map(e=>{
+        const cls=e.level==='ERROR'?'lvl-ERROR':e.level==='WARN'?'lvl-WARN':'lvl-INFO';
+        return `<div class="log-line"><span class="log-time">${e.time}</span><span class="log-level ${cls}">[${(e.level||'?')}]</span><span class="log-msg">${e.message}</span></div>`;
+      }).join('');
+    }
+
+  } catch(e){ console.warn('dashboard refresh error',e); }
+}
+
+/* initial + periodic refresh */
+refresh();
+setInterval(refresh,2000);
+
+/* redraw charts on resize */
+window.addEventListener('resize',()=>{refresh()});
+</script>
+</body>
+</html>
