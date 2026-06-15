@@ -40,7 +40,50 @@ Invoke-RestMethod http://localhost:8001/health
 # Expected: status=ok, ollama=True
 ```
 
-Live dashboard: **http://localhost:8001/dashboard** — comprehensive command center with live TPS sparkline, input/output bar charts, session stats (uptime, requests, errors), active request table, request history, and timestamped event log. Auto-refreshes every 2s.
+Live dashboard: **http://localhost:8001/dashboard** — redesigned Analytics UI with:
+- **Live tab**: TPS sparkline, I/O bar chart, active request table, session history (Chart.js, auto-refresh 2s)
+- **History tab**: Full MongoDB request log with 24h/7d/30d/90d time range filters
+- **Usage tab**: Daily & hourly token usage charts (input vs output, request count)
+- **Event Log tab**: Filterable proxy event stream (ALL / INFO / WARN / ERROR)
+
+---
+
+## ⚠️ Critical: Modifying the Proxy (Self-Deploy Protocol)
+
+**The VS Code Copilot chat session runs THROUGH this proxy.** Restarting the proxy will terminate the current AI session mid-response.
+
+**Rules to follow every time you modify and redeploy:**
+1. Make ALL code changes to every file BEFORE issuing any restart commands.
+2. Install any new Python dependencies BEFORE restarting.
+3. Issue the kill + restart as a **single chained PowerShell command** so the proxy comes back up automatically (no second turn needed):
+   ```powershell
+   Stop-Process -Id (Get-NetTCPConnection -LocalPort 8001 -ErrorAction SilentlyContinue).OwningProcess -Force -ErrorAction SilentlyContinue ; Start-Sleep -Milliseconds 500 ; .\scripts\start-proxy-local.ps1
+   ```
+4. **Expect your session to be terminated.** This is normal. The new proxy process will start and VS Code will reconnect automatically on the next message.
+5. Never restart the proxy as a mid-task step — only as the final action after all changes are complete and validated.
+
+---
+
+## MongoDB Persistence
+
+The proxy now stores every request to MongoDB for historical analytics.
+
+| Setting | Value |
+|---|---|
+| Connection | `host.docker.internal:27017` (Docker MongoDB) |
+| Database | `radiacode` |
+| Collection | `requests` |
+| Auth | `ryan` / configured in `.env` |
+
+**Fields stored per request:** `request_id`, `model`, `prompt_tokens`, `completion_tokens`, `total_tokens`, `duration_secs`, `ttft_secs`, `tps`, `has_error`, `timestamp`
+
+Dashboard API endpoints (all MongoDB-backed):
+- `GET /api/history?days=30&limit=200` — raw request log
+- `GET /api/usage/daily?days=30` — aggregated daily token usage
+- `GET /api/usage/hourly?days=7` — aggregated hourly token usage
+- `GET /api/stats/summary?days=30` — summary KPIs
+
+If MongoDB is unavailable, the proxy runs in memory-only mode (live data still works; History/Usage dashboard pages show "not connected").
 
 ---
 

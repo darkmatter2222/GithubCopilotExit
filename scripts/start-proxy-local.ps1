@@ -10,6 +10,20 @@
 
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned -Force
 
+# ── Load .env into environment variables ───────────────────────────────────
+$envFile = Join-Path $PSScriptRoot "..\.env"
+if (Test-Path $envFile) {
+    Get-Content $envFile | Where-Object { $_ -match '^\s*[^#]\S+=\S' } | ForEach-Object {
+        $parts = $_ -split '=', 2
+        if ($parts.Count -eq 2) {
+            $k = $parts[0].Trim()
+            $v = $parts[1].Trim()
+            [System.Environment]::SetEnvironmentVariable($k, $v, 'Process')
+        }
+    }
+    Write-Host "    .env loaded" -ForegroundColor Gray
+}
+
 $env:OLLAMA_BASE_URL   = "http://localhost:11434"
 $env:SERVED_MODEL_NAME = "qwen3"
 $env:MIN_TEMPERATURE   = "0.6"

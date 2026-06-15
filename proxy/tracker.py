@@ -1,11 +1,21 @@
 """
 Token throughput tracker for LLM proxy.
 Tracks active requests, token counts, and computes tokens/sec in real time.
+Persists completed requests to MongoDB for historical analysis.
 """
 
+import asyncio
 import threading
 import time
 from dataclasses import dataclass, field
+
+# ── DB handle (set by main.py at startup) ──
+db_backend = None
+
+def set_db(backend):
+    """Assign the SessionDB instance so tracker can persist requests."""
+    global db_backend
+    db_backend = backend
 
 @dataclass
 class RequestStats:
@@ -59,6 +69,8 @@ class TokenTracker:
         self.session_start_time = time.time()
         self.success_count = 0
         self.error_count = 0
+        self.total_prompt_tokens = 0      # monotonic session total (never decremented)
+        self.total_completion_tokens = 0  # monotonic session total (never decremented)
         self.tps_history: list = []       # [{ts, value}]
         self.events: list = []            # [{ts, level, message}]
 
@@ -124,17 +136,42 @@ class TokenTracker:
                 s.finished = True
                 s.finish_time = time.time()
             self.error_count += 1
+            in_t = s.prompt_tokens if s else 0
+            out_t = max(s.completion_tokens, s.eval_count) if s else 0
+            dur = round((time.time() - s.start_time), 1) if s else 0
             # Store in history too
             self._history.insert(0, {
                 "id": request_id,
                 "model": s.model if s else "?",
-                "prompt_tokens": s.prompt_tokens if s else 0,
-                "output_tokens": max(s.completion_tokens, s.eval_count) if s else 0,
-                "duration": round((time.time() - s.start_time), 1) if s else 0,
+                "prompt_tokens": in_t,
+                "output_tokens": out_t,
+                "duration": dur,
                 "active": False,
                 "error": message,
             })
+            # Accumulate into monotonic session totals (never decremented)
+            self.total_prompt_tokens += in_t
+            self.total_completion_tokens += out_t
             self._log_event("ERROR", f"{request_id}: {message}")
+
+            # ── Persist error to MongoDB (fire-and-forget) ──
+            if db_backend and db_backend.enabled:
+                record = {
+                    "request_id": request_id,
+                    "model": s.model if s else "?",
+                    "prompt_tokens": in_t,
+                    "completion_tokens": out_t,
+                    "total_tokens": in_t + out_t,
+                    "duration_secs": dur,
+                    "ttft_secs": 0,
+                    "tps": 0,
+                    "has_error": True,
+                    "error_message": message[:500],
+                }
+                try:
+                    asyncio.create_task(db_backend.save_request(record))
+                except Exception:
+                    pass
 
     def finish_request(self, request_id: str) -> None:
         with self._lock:
@@ -165,6 +202,27 @@ class TokenTracker:
 
             self._log_event("INFO",
                             f"{s.request_id} done · {in_t} in / {out} out · {dur:.1f}s")
+            # Accumulate into monotonic session totals (never decremented)
+            self.total_prompt_tokens += in_t
+            self.total_completion_tokens += out
+
+            # ── Persist to MongoDB (fire-and-forget, non-blocking) ──
+            if db_backend and db_backend.enabled:
+                record = {
+                    "request_id": s.request_id,
+                    "model": s.model,
+                    "prompt_tokens": in_t,
+                    "completion_tokens": out,
+                    "total_tokens": in_t + out,
+                    "duration_secs": round(dur, 2),
+                    "ttft_secs": round(s.first_token_time - s.start_time, 3) if s.first_token_time else 0,
+                    "tps": round(s.tps_since_first_token, 1),
+                    "has_error": False,
+                }
+                try:
+                    asyncio.create_task(db_backend.save_request(record))
+                except Exception:
+                    pass  # Don't let DB failures break the tracker
 
     # ── chart helper (no external lock needed, called from get_active_summary) ──
     def _snapshot_tps(self) -> None:
@@ -185,13 +243,13 @@ class TokenTracker:
                       if not s.finished and (now - s.last_token_time) < 10]
 
             combined_tps = sum(s.tps_since_first_token for s in recent)
-            total_in = sum(s.prompt_tokens for s in self._requests.values())
-            total_out = sum(max(s.completion_tokens, s.eval_count)
-                           for s in self._requests.values())
-            # Add history totals
-            for h in self._history:
-                total_in += h.get("prompt_tokens", 0)
-                total_out += h.get("output_tokens", 0)
+            # Active requests still in flight (not yet in history)
+            active_in = sum(s.prompt_tokens for s in self._requests.values())
+            active_out_sum = sum(max(s.completion_tokens, s.eval_count)
+                                for s in self._requests.values())
+            # Session totals = monotonic accumulator + currently active requests
+            total_in = self.total_prompt_tokens + active_in
+            total_out = self.total_completion_tokens + active_out_sum
 
             self._snapshot_tps()
 

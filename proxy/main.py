@@ -9,15 +9,27 @@ Responsibilities:
 - No authentication required.
 - Streams responses when the client requests streaming.
 - Tracks token throughput stats at /stats (JSON) and /dashboard (live HTML).
+- Persists all request data to MongoDB for historical analysis.
 """
 
 import os
+import sys
 import json
 import time
 import uuid
 import logging
+from contextlib import asynccontextmanager
+
+# ── Load .env before anything else ───────────────────────────────────────
+from dotenv import load_dotenv
+_env_path = os.path.join(os.path.dirname(__file__), "..", ".env")
+if os.path.exists(_env_path):
+    load_dotenv(_env_path)
+elif os.path.exists(".env"):
+    load_dotenv(".env")
+
 from fastapi import FastAPI, Request, Response
-from fastapi.responses import StreamingResponse, HTMLResponse
+from fastapi.responses import StreamingResponse, HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import httpx
 
@@ -28,12 +40,26 @@ OLLAMA_BASE = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
 SERVED_MODEL = os.environ.get("SERVED_MODEL_NAME", "qwen3")
 MIN_TEMPERATURE = float(os.environ.get("MIN_TEMPERATURE", "0.6"))
 
-from tracker import TokenTracker
+from tracker import TokenTracker, set_db
+from db import SessionDB
 
 tracker = TokenTracker()
+session_db = SessionDB()
+set_db(session_db)
 
 
-app = FastAPI(title="LLM Proxy", version="1.0.0")
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    await session_db.ensure_connection()
+    if session_db.enabled:
+        log.info("MongoDB persistence enabled")
+    else:
+        log.warning("MongoDB not available — running memory-only (set MONGO_URI in .env)")
+    yield
+    await session_db.close()
+
+
+app = FastAPI(title="LLM Proxy", version="2.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -210,7 +236,37 @@ async def embeddings(request: Request):
     return Response(content=resp.content, status_code=resp.status_code, media_type="application/json")
 
 
-# ── Live stats dashboard ───────────────────────────────────────────────
+# ── Historical API (MongoDB-backed) ───────────────────────────────────
+
+@app.get("/api/history")
+async def get_history(days: int = 30, limit: int = 200):
+    """Request history from MongoDB for the last N days."""
+    docs = await session_db.get_requests(limit=limit, days=days)
+    return JSONResponse(content={"count": len(docs), "data": docs})
+
+
+@app.get("/api/usage/daily")
+async def get_daily_usage(days: int = 30):
+    """Aggregated daily token usage from MongoDB."""
+    rows = await session_db.get_token_usage_by_day(days=days)
+    return JSONResponse(content={"count": len(rows), "data": rows})
+
+
+@app.get("/api/usage/hourly")
+async def get_hourly_usage(days: int = 7):
+    """Aggregated hourly token usage from MongoDB."""
+    rows = await session_db.get_token_usage_by_hour(days=days)
+    return JSONResponse(content={"count": len(rows), "data": rows})
+
+
+@app.get("/api/stats/summary")
+async def get_stats_summary(days: int = 30):
+    """Summary statistics from MongoDB over the last N days."""
+    data = await session_db.get_stats_summary(days=days)
+    return JSONResponse(content=data)
+
+
+# ── Live stats ─────────────────────────────────────────────────────────
 
 @app.get("/stats")
 async def stats_json():
