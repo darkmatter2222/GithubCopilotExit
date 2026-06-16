@@ -88,6 +88,14 @@ def normalize_model(body: dict) -> dict:
 
 
 def prepare_body(body: dict) -> dict:
+    # Defensive guard: some clients send body as pre-encoded JSON string
+    if isinstance(body, str):
+        import json
+        try:
+            body = json.loads(body)
+        except Exception:
+            log.warning("Failed to parse body as JSON string, returning empty request")
+            return body
     body = clamp_temperature(body)
     body = normalize_model(body)
     return body
@@ -132,6 +140,7 @@ async def chat_completions(request: Request):
 
         async def generate():
             token_count = 0
+            saved_id = "fallback"
             try:
                 async with httpx.AsyncClient(timeout=None) as client:
                     async with client.stream(
@@ -147,6 +156,7 @@ async def chat_completions(request: Request):
                                         continue
                                     try:
                                         payload = json.loads(data_part)
+                                        saved_id = payload.get("id", saved_id)
                                         # Count output tokens
                                         choices = payload.get("choices", [])
                                         if choices:
@@ -163,10 +173,27 @@ async def chat_completions(request: Request):
                                             tracker.update_from_response(request_id, payload)
                                     except (json.JSONDecodeError, KeyError):
                                         pass
+                            # Qwen3 thinking-only response: model generated a <think>
+                            # block but no actual content. Inject a synthetic SSE chunk
+                            # before [DONE] so VS Code doesn't show "No response returned".
+                            if token_count == 0 and b"data: [DONE]" in chunk:
+                                synth = (
+                                    f'data: {{"id":"{saved_id}","object":"chat.completion.chunk",'
+                                    f'"choices":[{{"index":0,"delta":{{"content":"[Model produced no output \u2014 please retry]"}},"finish_reason":null}}]}}\n\n'
+                                )
+                                yield synth.encode()
                             yield chunk
             except Exception as exc:
                 log.error(f"[{request_id}] error: {exc}")
                 tracker.record_error(request_id, str(exc))
+                # Yield a synthetic chunk so VS Code shows an error message
+                # instead of the silent "No response returned" dialog.
+                synth = (
+                    f'data: {{"id":"{saved_id}","object":"chat.completion.chunk",'
+                    f'"choices":[{{"index":0,"delta":{{"content":"[Stream interrupted \u2014 please retry]"}},"finish_reason":"stop"}}]}}\n\n'
+                    f'data: [DONE]\n\n'
+                )
+                yield synth.encode()
                 return
             finally:
                 if token_count > 0 or request_id in tracker._requests:
