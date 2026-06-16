@@ -21,23 +21,107 @@
 ## ⚡ Quick Start
 
 ```
-Clone → Setup (once) → Proxy (every session) → Code
-    ~2 min          30 seconds             Instant
+Clone → Setup (once) → go.ps1 (every session) → Code
+    ~2 min         ~18 GB download           Instant
 ```
 
-**One-time setup:**
+**One-time setup (first time only):**
 ```powershell
 git clone https://github.com/darkmatter2222/GithubCopilotExit.git
 cd GithubCopilotExit
 .\scripts\setup-local.ps1
 ```
 
-**Every session after that:**
+**Every session — one command does everything:**
 ```powershell
-.\scripts\start-proxy-local.ps1
+.\scripts\go.ps1
 ```
 
-Then open VS Code, fire up Copilot Chat, and select **Qwen3.6-27B (RTX 5090)**. You're live. 🎯
+Or from anywhere on your machine (great for a desktop shortcut):
+```powershell
+powershell -ExecutionPolicy Bypass -File "C:\Users\<YOU>\source\repos\GithubCopilotExit\scripts\go.ps1"
+```
+
+`go.ps1` automatically:
+- Starts Ollama if it isn't running
+- Pulls the model and creates the alias if missing
+- **Loads the model into GPU VRAM** (so your first request is instant, not 20-30s)
+- Kills and restarts the proxy fresh on port 8001
+- Polls until everything is healthy, then prints the dashboard URL
+
+Then open VS Code → Copilot Chat → select **Qwen3.6-27B (RTX 5090)**. You're live.
+
+---
+
+## 🥶 Cold Startup — What `go.ps1` Does (Step by Step)
+
+`go.ps1` is the one command you run every session. Here's exactly what it does, in order, so you know what's happening when you watch it run:
+
+### Step 1 — Sanity check
+Verifies `.venv` exists. If not, tells you to run `setup-local.ps1` first (one-time only).
+
+### Step 2 — Start Ollama (if needed)
+Polls `localhost:11434`. If Ollama isn't running, it launches `ollama serve` minimized in the background and waits up to 45 seconds for it to come up. If Ollama is already running (common after a reboot with auto-start), it skips this entirely.
+
+> Ollama is the model server. It owns the GPU and serves inference. Nothing else works without it.
+
+### Step 3 — Check / pull the model
+Lists installed Ollama models and checks for the `qwen3` alias. If it's missing (fresh machine or after wiping Ollama data), it automatically runs `setup-local.ps1` to pull the ~18 GB weights and create the alias with the 262K context window baked in.
+
+### Step 4 — Load model into GPU VRAM
+```
+==> Loading qwen3 into VRAM (may take ~15-20s)...
+OK — Hello! How can I assist you today?
+```
+This is the warmup step. It sends a trivial "hi" message to Ollama to force the model weights to load from disk into GPU VRAM. Without this, your **first real VS Code request would stall for 20-30 seconds** while 18 GB loads off the SSD. After this step, the model is hot and every request is instant.
+
+### Step 5 — Kill and restart the proxy
+Checks port 8001. If anything is listening there (old proxy, crashed process, whatever), it kills it. Then it starts a **new proxy window** running `start-proxy-local.ps1`. The proxy window stays open so you can watch request logs.
+
+### Step 6 — Health check
+Polls `http://localhost:8001/health` every 600ms until it sees `{status: ok, ollama: True}`. If that doesn't happen within 25 seconds, it fails loudly with instructions.
+
+### Step 7 — Done
+```
+  ================================================
+    Stack is UP. Everything is ready.
+  ------------------------------------------------
+    Proxy     : http://localhost:8001
+    Health    : http://localhost:8001/health
+    Dashboard : http://localhost:8001/dashboard
+  ------------------------------------------------
+    VS Code: Ctrl+Shift+I  →  Qwen3.6-27B (RTX 5090)
+  ================================================
+```
+
+Open VS Code, hit `Ctrl+Shift+I`, pick the model, and go.
+
+### Manual fallback (if you need to run steps individually)
+
+If `go.ps1` isn't what you want and you need manual control:
+
+```powershell
+# 1. Start Ollama (if not running)
+ollama serve   # leave this window open
+
+# 2. Load model into VRAM
+python scripts\warmup.py
+
+# 3. Start proxy (leave this window open)
+.\scripts\start-proxy-local.ps1
+
+# 4. Verify
+Invoke-RestMethod http://localhost:8001/health
+# → @{status=ok; ollama=True}
+```
+
+### Live Dashboard
+
+Once the proxy is running, open **http://localhost:8001/dashboard** in your browser:
+- Tokens per second (TPS) with a rolling sparkline
+- Per-request token breakdown (input vs output)
+- Active request status and elapsed time
+- Full request history and event log
 
 ---
 
@@ -245,31 +329,29 @@ cat "$env:APPDATA\Code\User\chatLanguageModels.json"
 
 > **After saving**, reload VS Code (`Ctrl+Shift+P` → "Reload Window"). The new model will appear in the Copilot Chat picker at the bottom of the chat panel.
 
-### Step 3 — Start Coding 🚀
+### Step 3 — Start Every Session with `go.ps1`
 
-Every session:
+This is the only command you need every session:
 
-**1. Ensure Ollama is running** (auto-starts with Windows on most setups):
 ```powershell
-# Quick check — should return model list
-Invoke-RestMethod http://localhost:11434/api/tags
-# If not, start it: ollama serve
+.\scripts\go.ps1
 ```
 
-**2. Start the proxy:**
+Or from anywhere on your machine:
 ```powershell
-.\scripts\start-proxy-local.ps1
+powershell -ExecutionPolicy Bypass -File "C:\Users\<YOU>\source\repos\GithubCopilotExit\scripts\go.ps1"
 ```
 
-Keep this terminal open. It streams every request as you code.
+It handles everything automatically:
+- Starts Ollama if needed, waits for it to be ready
+- Pulls the model if missing
+- **Loads model weights into GPU VRAM** (warmup)
+- Kills any stale proxy and starts a fresh one in a new window
+- Polls until healthy, then prints the dashboard URL
 
-**3. (Optional but recommended) Warm up VRAM:**
-```powershell
-python scripts\warmup.py
-```
-This pre-loads the model into GPU memory so your first real request doesn't have a 20-30 second cold start.
+Wait for the green "Stack is UP" banner, then open VS Code → `Ctrl+Shift+I` → select **Qwen3.6-27B (RTX 5090)**.
 
-**4. Open VS Code**, open Copilot Chat (`Ctrl+Shift+I`), select **Qwen3.6-27B (RTX 5090)** from the model picker, and start coding.
+> **For a detailed explanation of what each step does,** see the [Cold Startup section](#-cold-startup--what-gops1-does-step-by-step) above.
 
 ---
 
@@ -310,8 +392,9 @@ GithubCopilotExit/
 │   ├── requirements.txt     # fastapi, uvicorn, httpx
 │   └── Dockerfile           # Container support for Unix environments
 ├── scripts/
+│   ├── go.ps1               # EVERY SESSION: one command — starts everything from scratch
 │   ├── setup-local.ps1      # ONE-TIME: create .venv, pull model, set up alias
-│   ├── start-proxy-local.ps1 # EVERY SESSION: starts the proxy server
+│   ├── start-proxy-local.ps1 # Called by go.ps1; can also run standalone
 │   ├── test-proxy.py        # Smoke tests: health check + sample inference
 │   └── warmup.py            # Pre-loads model into VRAM for faster cold starts
 ├── AGENTS.md                # Stack reference doc for AI coding agents

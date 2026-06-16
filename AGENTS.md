@@ -138,7 +138,8 @@ Installs Python deps into `.venv`, pulls the model (~18 GB), and creates the `qw
 
 ```
 First-time setup    : .\scripts\setup-local.ps1
-Start proxy         : .\scripts\start-proxy-local.ps1
+Every session (all) : .\scripts\go.ps1          ← one command does everything
+Start proxy only    : .\scripts\start-proxy-local.ps1
 Smoke test          : python scripts\test-proxy.py
 Warm up VRAM        : python scripts\warmup.py
 Build               : NOT APPLICABLE

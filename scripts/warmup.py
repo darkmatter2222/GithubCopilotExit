@@ -20,7 +20,10 @@ print(f"==> Loading {MODEL} into VRAM (may take ~15-20s)...")
 try:
     r = urllib.request.urlopen(req, timeout=120)
     resp = json.loads(r.read())
-    print("OK —", resp.get("message", {}).get("content", "")[:80])
+    content = resp.get("message", {}).get("content", "")
+    # Strip non-ASCII so Windows console doesn't choke on emoji in model responses
+    safe = content.encode("ascii", errors="ignore").decode("ascii")
+    print("OK -", safe[:80])
 except Exception as e:
     print("ERROR:", e)
     sys.exit(1)
