@@ -40,6 +40,27 @@ OLLAMA_BASE = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
 SERVED_MODEL = os.environ.get("SERVED_MODEL_NAME", "qwen3")
 MIN_TEMPERATURE = float(os.environ.get("MIN_TEMPERATURE", "0.6"))
 
+# ── Ollama bug workaround (temporary) ──────────────────────────────────
+# Bug: When thinking is ON and tools are present, Qwen3 puts all output into
+#  tokens and produces empty content + no tool_calls in the response.
+#
+# Root cause in Ollama ChatHandler: req.Think == nil → forced to true for any
+# model with CapabilityThinking. With thinking + tools simultaneously, the
+# thinking parser strips reasoning content, leaving nothing for the tool parser.
+#
+# Workaround: Inject reasoning_effort="none" into requests that carry tools.
+# This is the only path through Ollama's /v1 endpoint that sets Think=false.
+#
+# Tracking:
+#   Issue:  https://github.com/ollama/ollama/issues/10976
+#   PR:     https://github.com/ollama/ollama/pull/16758
+#   Related:#14493, #14601
+#
+# REMOVEME: Once a fixed version of Ollama is released that doesn't auto-promote
+# thinking for requests with tools, set DISABLE_THINKING_FOR_TOOLS=false or
+# remove this block entirely.
+DISABLE_THINKING_FOR_TOOLS = os.environ.get("DISABLE_THINKING_FOR_TOOLS", "true").lower() in ("true", "1", "yes")
+
 from tracker import TokenTracker, set_db
 from db import SessionDB
 
@@ -87,6 +108,32 @@ def normalize_model(body: dict) -> dict:
     return body
 
 
+def suppress_thinking_for_tools(body: dict) -> dict:
+    """
+    TEMPORARY WORKAROUND — Ollama bug #10976 / PR #16758
+    -------------------------------------------------------
+    When a thinking-capable model (Qwen3, DeepSeek-R1) receives a request that
+    includes tools but no explicit thinking preference, Ollama's ChatHandler
+    forces Think=true. The model then puts all output into <think> tokens and
+    emits no tool_calls — the client receives content="" with no tool calls.
+
+    Fix: inject reasoning_effort="none" when tools are present and the client
+    hasn't already set a thinking preference. This is the only field on the
+    /v1/chat/completions endpoint that Ollama maps to Think=false.
+
+    Controlled by env var DISABLE_THINKING_FOR_TOOLS (default: true).
+    Set to false once Ollama ships the server-side fix from PR #16758.
+    """
+    if not DISABLE_THINKING_FOR_TOOLS:
+        return body
+    has_tools = bool(body.get("tools"))
+    already_set = body.get("reasoning_effort") is not None
+    if has_tools and not already_set:
+        body["reasoning_effort"] = "none"
+        log.info("WORKAROUND #10976: injected reasoning_effort=none (tools present, thinking suppressed)")
+    return body
+
+
 def prepare_body(body: dict) -> dict:
     # Defensive guard: some clients send body as pre-encoded JSON string
     if isinstance(body, str):
@@ -98,6 +145,7 @@ def prepare_body(body: dict) -> dict:
             return body
     body = clamp_temperature(body)
     body = normalize_model(body)
+    body = suppress_thinking_for_tools(body)
     return body
 
 
@@ -140,7 +188,11 @@ async def chat_completions(request: Request):
 
         async def generate():
             token_count = 0
+            tool_call_seen = False   # True when any delta.tool_calls chunk is observed
+            fallback_injected = False  # Guard: only inject the fallback once
+            stream_had_done = False  # True when Ollama sent data: [DONE]
             saved_id = "fallback"
+            had_exception = False
             try:
                 async with httpx.AsyncClient(timeout=None) as client:
                     async with client.stream(
@@ -153,19 +205,23 @@ async def chat_completions(request: Request):
                                 if decoded.startswith("data: "):
                                     data_part = decoded[len("data: "):]
                                     if data_part == "[DONE]":
+                                        stream_had_done = True
                                         continue
                                     try:
                                         payload = json.loads(data_part)
                                         saved_id = payload.get("id", saved_id)
-                                        # Count output tokens
+                                        # Count output tokens and detect tool_calls
                                         choices = payload.get("choices", [])
                                         if choices:
-                                            content = (choices[0]
-                                                       .get("delta", {})
-                                                       .get("content", ""))
+                                            delta = choices[0].get("delta", {})
+                                            content = delta.get("content", "")
                                             if content:
                                                 token_count += 1
                                                 tracker.record_token(request_id)
+                                            # Track tool_calls so we don't fire the
+                                            # fallback for valid tool-call-only responses
+                                            if delta.get("tool_calls"):
+                                                tool_call_seen = True
 
                                         # Capture usage block from final chunk
                                         usage = payload.get("usage")
@@ -173,17 +229,27 @@ async def chat_completions(request: Request):
                                             tracker.update_from_response(request_id, payload)
                                     except (json.JSONDecodeError, KeyError):
                                         pass
-                            # Qwen3 thinking-only response: model generated a <think>
-                            # block but no actual content. Inject a synthetic SSE chunk
-                            # before [DONE] so VS Code doesn't show "No response returned".
-                            if token_count == 0 and b"data: [DONE]" in chunk:
+                            # Qwen3 thinking-only response: model generated only <think>
+                            # tokens (stripped by Ollama), leaving no visible content.
+                            # Inject a synthetic SSE chunk before [DONE] so VS Code
+                            # shows an actionable message instead of silently hanging.
+                            # Skip injection if tool_calls were seen — those responses
+                            # legitimately have no text content and must not get the warning.
+                            if (token_count == 0 and not tool_call_seen
+                                    and b"data: [DONE]" in chunk and not fallback_injected):
+                                log.warning(
+                                    f"[{request_id}] empty content detected (thinking-only?) "
+                                    f"— injecting fallback message before [DONE]"
+                                )
                                 synth = (
                                     f'data: {{"id":"{saved_id}","object":"chat.completion.chunk",'
                                     f'"choices":[{{"index":0,"delta":{{"content":"[Model produced no output \u2014 please retry]"}},"finish_reason":null}}]}}\n\n'
                                 )
                                 yield synth.encode()
+                                fallback_injected = True
                             yield chunk
             except Exception as exc:
+                had_exception = True
                 log.error(f"[{request_id}] error: {exc}")
                 tracker.record_error(request_id, str(exc))
                 # Yield a synthetic chunk so VS Code shows an error message
@@ -201,6 +267,23 @@ async def chat_completions(request: Request):
                         f"[{request_id}] completed — {token_count} tokens generated"
                     )
                     tracker.finish_request(request_id)
+
+            # Post-loop guard: if Ollama closed the stream cleanly without sending
+            # [DONE] (e.g. OOM, context overflow) and no content/tool_calls arrived,
+            # VS Code would receive an empty truncated stream and silently stop.
+            # Inject a synthetic + [DONE] to ensure VS Code always gets a clean close.
+            if (not had_exception and not stream_had_done
+                    and token_count == 0 and not tool_call_seen and not fallback_injected):
+                log.warning(
+                    f"[{request_id}] stream ended without [DONE] and no output "
+                    f"— injecting fallback to prevent silent stop"
+                )
+                synth = (
+                    f'data: {{"id":"{saved_id}","object":"chat.completion.chunk",'
+                    f'"choices":[{{"index":0,"delta":{{"content":"[Model produced no output \u2014 please retry]"}},"finish_reason":"stop"}}]}}\n\n'
+                    f'data: [DONE]\n\n'
+                )
+                yield synth.encode()
 
         return StreamingResponse(generate(), media_type="text/event-stream")
 
