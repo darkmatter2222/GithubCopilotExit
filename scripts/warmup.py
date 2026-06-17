@@ -1,8 +1,21 @@
 #!/usr/bin/env python3
-import urllib.request, json, sys
+import urllib.request, json, sys, os
 
 BASE = "http://localhost:11434"
-MODEL = "qwen3"  # alias with num_ctx 262144 — use this, not the raw base model
+
+# Read SERVED_MODEL_NAME from .env so this stays in sync with the proxy config
+def _read_env():
+    env_path = os.path.join(os.path.dirname(__file__), "..", ".env")
+    if os.path.exists(env_path):
+        with open(env_path) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, _, v = line.partition("=")
+                    os.environ.setdefault(k.strip(), v.strip())
+
+_read_env()
+MODEL = os.environ.get("SERVED_MODEL_NAME", "gemma-coder")
 
 payload = json.dumps({
     "model": MODEL,

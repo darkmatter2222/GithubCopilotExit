@@ -48,6 +48,18 @@ function Wait-For {
     Fail "$Label did not respond within ${TimeoutSec}s at $Url"
 }
 
+# ---- Load model config from .env -------------------------------------------
+$envFile = Join-Path $RepoRoot ".env"
+$envVars = @{}
+if (Test-Path $envFile) {
+    Get-Content $envFile | Where-Object { $_ -match '^\s*[^#]\S+=\S' } | ForEach-Object {
+        $parts = $_ -split '=', 2
+        if ($parts.Count -eq 2) { $envVars[$parts[0].Trim()] = $parts[1].Trim() }
+    }
+}
+$activeAlias = if ($envVars["SERVED_MODEL_NAME"]) { $envVars["SERVED_MODEL_NAME"] } else { "gemma-coder" }
+$ollamaModel = $envVars["OLLAMA_MODEL"]
+
 # ---- Paths ------------------------------------------------------------------
 $venv       = Join-Path $RepoRoot ".venv"
 $python     = Join-Path $venv "Scripts\python.exe"
@@ -97,20 +109,20 @@ if ($ollamaUp) {
 }
 
 # ---- Step 2: Verify/pull model ----------------------------------------------
-Step "Checking model (qwen3 alias)..."
+Step "Checking model alias '$activeAlias'..."
 
 $tags = Invoke-RestMethod "http://localhost:11434/api/tags"
 $installedNames = @($tags.models | ForEach-Object { $_.name })
-$aliasPresent = ($installedNames -contains "qwen3:latest") -or ($installedNames -contains "qwen3")
+$aliasPresent = ($installedNames -contains "$activeAlias`:latest") -or ($installedNames -contains $activeAlias)
 
 if (-not $aliasPresent) {
-    Warn "qwen3 alias not found. Running setup to pull model and create alias (~18 GB, one-time)..."
+    Warn "'$activeAlias' alias not found. Running setup to pull model and create alias..."
     & (Join-Path $RepoRoot "scripts\setup-local.ps1")
     if ($LASTEXITCODE -ne 0) { Fail "setup-local.ps1 failed. Fix errors above and re-run." }
     OK "Model and alias ready"
 } else {
-    $foundNames = ($installedNames | Where-Object { $_ -like "qwen3*" }) -join ", "
-    OK "qwen3 alias found: $foundNames"
+    $foundNames = ($installedNames | Where-Object { $_ -like "$activeAlias*" }) -join ", "
+    OK "'$activeAlias' alias found: $foundNames"
 }
 
 # ---- Step 3: VRAM Warmup ----------------------------------------------------
@@ -195,6 +207,6 @@ Write-Host "    Proxy     : http://localhost:8001" -ForegroundColor White
 Write-Host "    Health    : http://localhost:8001/health" -ForegroundColor White
 Write-Host "    Dashboard : http://localhost:8001/dashboard" -ForegroundColor White
 Write-Host "  ------------------------------------------------" -ForegroundColor Green
-Write-Host "    VS Code: Ctrl+Shift+I  ->  Qwen3.6-27B (RTX 5090)" -ForegroundColor White
+    Write-Host "    VS Code: Ctrl+Shift+I  ->  $activeAlias" -ForegroundColor White
 Write-Host "  ================================================" -ForegroundColor Green
 Write-Host ""

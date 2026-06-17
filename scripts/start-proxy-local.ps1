@@ -3,8 +3,9 @@
 # Run this script every time you start a session before using VS Code Copilot chat.
 #
 # Prerequisites:
-#   1. Ollama installed (https://ollama.com) with qwen3 alias created (run setup-local.ps1 once)
+#   1. Ollama installed (https://ollama.com) with the model alias created (run setup-local.ps1 once)
 #   2. pip install -r proxy/requirements.txt (run once after cloning)
+#   3. Model configured in .env (OLLAMA_MODEL + SERVED_MODEL_NAME)
 #
 # Usage:  .\scripts\start-proxy-local.ps1
 
@@ -24,16 +25,17 @@ if (Test-Path $envFile) {
     Write-Host "    .env loaded" -ForegroundColor Gray
 }
 
-$env:OLLAMA_BASE_URL   = "http://localhost:11434"
-$env:SERVED_MODEL_NAME = "qwen3"
-$env:MIN_TEMPERATURE   = "0.6"
-$env:API_PORT          = "8001"
+# Apply defaults for any values not set in .env
+if (-not $env:OLLAMA_BASE_URL)   { $env:OLLAMA_BASE_URL   = "http://localhost:11434" }
+if (-not $env:SERVED_MODEL_NAME) { $env:SERVED_MODEL_NAME = "gemma-coder" }
+if (-not $env:MIN_TEMPERATURE)   { $env:MIN_TEMPERATURE   = "0.6" }
+if (-not $env:API_PORT)          { $env:API_PORT           = "8001" }
 
 Write-Host "==> Starting LLM proxy" -ForegroundColor Cyan
 Write-Host "    Listening : http://localhost:$env:API_PORT"
 Write-Host "    Ollama    : $env:OLLAMA_BASE_URL"
 Write-Host "    Model     : $env:SERVED_MODEL_NAME"
-Write-Host "    Min temp  : $env:MIN_TEMPERATURE  (clamped for Qwen3 thinking mode)"
+Write-Host "    Min temp  : $env:MIN_TEMPERATURE"
 Write-Host ""
 
 # Use .venv's uvicorn directly — avoids PATH/activation issues
