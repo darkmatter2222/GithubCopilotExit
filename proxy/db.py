@@ -171,6 +171,61 @@ class SessionDB:
             print(f"[db warn] Failed to get stats summary: {e}")
             return {}
 
+    async def get_cost_summary(self, days: int = 30) -> dict:
+        """Aggregate token usage and compute equivalent cloud & local GPU costs."""
+        if not self.enabled:
+            return {}
+        try:
+            from datetime import timedelta
+            cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+            pipeline = [
+                {"$match": {"timestamp": {"$gte": cutoff}}},
+                {
+                    "$group": {
+                        "_id": None,
+                        "total_requests": {"$sum": 1},
+                        "total_input_tokens": {"$sum": "$prompt_tokens"},
+                        "total_output_tokens": {"$sum": "$completion_tokens"},
+                        "total_duration_secs": {"$sum": "$duration_secs"},
+                    }
+                },
+            ]
+            result = await self.requests.aggregate(pipeline).to_list(length=1)
+            if result:
+                return result[0]
+            return {}
+        except Exception as e:
+            print(f"[db warn] Failed to get cost summary: {e}")
+            return []
+
+    async def get_cost_by_day(self, days: int = 30) -> list:
+        """Aggregate daily token usage for cost-per-day chart."""
+        if not self.enabled:
+            return []
+        try:
+            from datetime import timedelta
+            cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+            pipeline = [
+                {"$match": {"timestamp": {"$gte": cutoff}}},
+                {
+                    "$group": {
+                        "_id": {"$dateToString": {"format": "%Y-%m-%d", "date": "$timestamp"}},
+                        "total_input_tokens": {"$sum": "$prompt_tokens"},
+                        "total_output_tokens": {"$sum": "$completion_tokens"},
+                        "total_duration_secs": {"$sum": "$duration_secs"},
+                    }
+                },
+                {"$sort": {"_id": 1}},
+            ]
+            docs = await self.requests.aggregate(pipeline).to_list(length=days)
+            for d in docs:
+                d["date"] = d["_id"]
+                d.pop("_id", None)
+            return docs
+        except Exception as e:
+            print(f"[db warn] Failed to get daily cost: {e}")
+            return []
+
     async def close(self) -> None:
         if self.client:
             self.client.close()

@@ -129,6 +129,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
     <button class="nav-tab active" onclick="showPage('live',this)">Live</button>
     <button class="nav-tab" onclick="showPage('history',this)">History</button>
     <button class="nav-tab" onclick="showPage('usage',this)">Usage</button>
+    <button class="nav-tab" onclick="showPage('cost',this)" style="color:var(--teal)">💰 Cost</button>
     <button class="nav-tab" onclick="showPage('log',this)">Event Log</button>
   </div>
   <div class="nav-right">
@@ -151,8 +152,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
     <div class="kpi red"><div class="kpi-label">Errors</div><div class="kpi-val" id="kpi-err">â€”</div></div>
     <div class="kpi teal"><div class="kpi-label">Session Input</div><div class="kpi-val" id="kpi-in" style="font-size:1.3rem">â€”</div><div class="kpi-sub">tokens</div></div>
     <div class="kpi yellow"><div class="kpi-label">Session Output</div><div class="kpi-val" id="kpi-out" style="font-size:1.3rem">â€”</div><div class="kpi-sub">tokens</div></div>
-    <div class="kpi blue"><div class="kpi-label">Active Now</div><div class="kpi-val" id="kpi-active">â€”</div></div>
-  </div>
+    <div class="kpi blue"><div class="kpi-label">Active Now</div><div class="kpi-val" id="kpi-active">â€”</div></div>    <div class="kpi teal"><div class="kpi-label">Session Cost (Cloud-equiv.)</div><div class="kpi-val" id="kpi-cost" style="font-size:1.3rem">—</div><div class="kpi-sub" id="kpi-cost-sub"></div></div>  </div>
 
   <!-- Charts row -->
   <div class="grid-2">
@@ -263,6 +263,66 @@ tr:hover td{background:rgba(255,255,255,.02)}
 <!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
 <!-- PAGE: EVENT LOG                                                     -->
 <!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+
+<!-- ──────────── PAGE: COST ──────────── -->
+<div class="page" id="page-cost">
+  <div class="section-hdr" style="margin-top:20px">
+    <h2>Cost Analysis</h2>
+    <div class="pill-group" id="cost-range">
+      <button class="pill" onclick="setCostDays(1,this)">24h</button>
+      <button class="pill" onclick="setCostDays(7,this)">7d</button>
+      <button class="pill active" onclick="setCostDays(30,this)">30d</button>
+      <button class="pill" onclick="setCostDays(90,this)">90d</button>
+    </div>
+  </div>
+
+  <!-- Cost KPIs -->
+  <div class="kpi-grid">
+    <div class="kpi teal"><div class="kpi-label">Your GPU Cost (Local)</div><div class="kpi-val" id="ckpi-local">&#8212;</div><div class="kpi-sub">electricity + amortized hardware</div></div>
+    <div class="kpi red"><div class="kpi-label">Cloud Cost (High Tier)</div><div class="kpi-val" id="ckpi-high">&#8212;</div><div class="kpi-sub">GPT-5.5 / Claude Opus avg</div></div>
+    <div class="kpi mauve"><div class="kpi-label">Cloud Cost (Mid Tier)</div><div class="kpi-val" id="ckpi-mid">&#8212;</div><div class="kpi-sub">GPT-5.4 Mini / Sonnet avg</div></div>
+    <div class="kpi blue"><div class="kpi-label">Cloud Cost (Low Tier)</div><div class="kpi-val" id="ckpi-low">&#8212;</div><div class="kpi-sub">GPT Nano / Haiku avg</div></div>
+    <div class="kpi green"><div class="kpi-label">Savings vs High Tier</div><div class="kpi-val" id="ckpi-save-high">&#8212;</div><div class="kpi-sub">what your RTX 5090 is saving</div></div>
+    <div class="kpi green"><div class="kpi-label">Savings vs Mid Tier</div><div class="kpi-val" id="ckpi-save-mid">&#8212;</div><div class="kpi-sub">what your RTX 5090 is saving</div></div>
+    <div class="kpi teal"><div class="kpi-label">GPU Hourly Rate</div><div class="kpi-val" id="ckpi-hourly" style="font-size:1.3rem">&#8212;</div><div class="kpi-sub">your local cost per hour</div></div>
+    <div class="kpi yellow"><div class="kpi-label">Total GPU Hours</div><div class="kpi-val" id="ckpi-hours" style="font-size:1.3rem">&#8212;</div><div class="kpi-sub">inference time this period</div></div>
+  </div>
+
+  <!-- Daily cost comparison chart -->
+  <div class="panel" style="margin-bottom:16px">
+    <div class="panel-title">Daily Cost Comparison — Cloud (High/Mid/Low) vs Your GPU</div>
+    <div class="chart-wrap" style="height:300px"><canvas id="chartCostDaily"></canvas></div>
+  </div>
+
+  <!-- Cumulative savings chart + cost breakdown -->
+  <div class="grid-2">
+    <div class="panel">
+      <div class="panel-title">Cumulative Savings vs Cloud</div>
+      <div class="chart-wrap" style="height:260px"><canvas id="chartSavings"></canvas></div>
+    </div>
+    <div class="panel">
+      <div class="panel-title">GPU Hourly Cost Breakdown</div>
+      <div id="cost-breakdown" style="padding:10px 0;"></div>
+    </div>
+  </div>
+
+  <!-- Model pricing reference table -->
+  <div class="panel" style="margin-top:16px">
+    <div class="panel-title">Cloud Model Pricing Reference (per 1M tokens)</div>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Model</th><th>Tier</th><th>Input / 1M</th><th>Output / 1M</th></tr></thead>
+        <tbody id="tbl-model-pricing"><tr><td colspan="4" style="text-align:center;color:var(--subtext);padding:20px">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- DB not connected warning -->
+  <div id="cost-no-db" style="display:none;text-align:center;padding:60px;color:var(--subtext)">
+    MongoDB not connected — cost analysis unavailable. Set MONGO_URI in .env and restart.
+  </div>
+</div>
+
 <div class="page" id="page-log">
   <div class="section-hdr" style="margin-top:20px">
     <h2>Event Log</h2>
@@ -309,6 +369,7 @@ function showPage(id, btn){
   btn.classList.add('active');
   if(id==='history') loadHistory();
   if(id==='usage') loadUsage();
+  if(id==='cost') loadCostPage();
 }
 
 // â”€â”€ Clock â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -415,6 +476,11 @@ async function refreshLive(){
     $('kpi-in').textContent     = nf(d.total_input_tokens);
     $('kpi-out').textContent    = nf(d.total_output_tokens);
     $('kpi-active').textContent = d.active_requests;
+    
+    // Update session cost estimate
+    if(d.live_session_cost){
+      updateSessionCost(d.live_session_cost);
+    }
 
     // Check DB from stats (we'll use the health endpoint separately)
     updateDbStatus(d);
@@ -659,6 +725,11 @@ setInterval(async () => {
   $('kpi-out').textContent    = nf(d.total_output_tokens);
   $('kpi-active').textContent = d.active_requests;
 
+  // Update session cost estimate
+  if(d.live_session_cost){
+    updateSessionCost(d.live_session_cost);
+  }
+
   if(d.tps_history?.length) updateTpsChart(d.tps_history);
   if((d.io_series||[]).length) updateIoChart(d.io_series);
 
@@ -699,6 +770,195 @@ setInterval(async () => {
 }, 2000);
 
 setInterval(checkDbStatus, 30000);
+
+
+// ── COST PAGE ────────────────────────────────────────────────────────
+let costDays = 30;
+let costDailyChart = null, savingsChart = null;
+
+function setCostDays(d, btn){
+  costDays=d;
+  document.querySelectorAll('#cost-range .pill').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  loadCostPage();
+}
+
+const DOLLAR_FMT = (n) => {
+  if(n===null||n===undefined) return '—';
+  const a=Math.abs(n);
+  if(a>=100) return '$'+n.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+  if(a>=1) return '$'+' '+n.toFixed(2);
+  if(a>=0.01) return '$'+n.toFixed(3);
+  return '$'+n.toFixed(4);
+};
+
+async function loadCostPage(){
+  try{
+    const summary = await fetch(`/api/cost/summary?days=${costDays}`).then(r=>r.json());
+    
+    if(!summary || summary.total_requests===undefined){
+      $('cost-no-db').style.display='';
+      // Hide all other elements
+      document.querySelector('#page-cost .kpi-grid').style.display='none';
+      document.getElementById('chartCostDaily')?.parentElement?.parentElement && (document.getElementById('chartCostDaily').parentElement.parentElement.style.display='none');
+      return;
+    }
+    
+    $('cost-no-db').style.display='none';
+
+    // KPIs
+    $('ckpi-local').textContent = DOLLAR_FMT(summary.local_gpu_cost);
+    $('ckpi-high').textContent = DOLLAR_FMT(summary.cloud_costs_raw?.high);
+    $('ckpi-mid').textContent = DOLLAR_FMT(summary.cloud_costs_raw?.medium);
+    $('ckpi-low').textContent = DOLLAR_FMT(summary.cloud_costs_raw?.low);
+    
+    const saveHigh = summary.savings_vs_high||0;
+    const saveMid = summary.savings_vs_medium||0;
+    $('ckpi-save-high').textContent = saveHigh>0 ? DOLLAR_FMT(saveHigh) : '$0.00';
+    $('ckpi-save-mid').textContent = saveMid>0 ? DOLLAR_FMT(saveMid) : '$0.00';
+    $('ckpi-hourly').textContent = DOLLAR_FMT(summary.gpu_hourly_rate)+'/hr';
+    $('ckpi-hours').textContent = (summary.total_duration_hours||0).toFixed(1)+'h';
+
+    // Cost breakdown panel
+    const hwPerHour = (1800/36/730);
+    const elecPerHour = (400/1000)*0.128;
+    $('cost-breakdown').innerHTML = `
+      <div style="padding:8px 0;border-bottom:1px solid var(--overlay)">
+        <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+          <span style="color:var(--subtext)">Electricity (400W \u00d7 $0.128/kWh)</span>
+          <span>${DOLLAR_FMT(elecPerHour)}/hr</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+          <span style="color:var(--subtext)">Amortized GPU hardware ($1800 / 36mo)</span>
+          <span>${DOLLAR_FMT(hwPerHour)}/hr</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-weight:700;margin-top:8px">
+          <span>Total GPU hourly rate</span>
+          <span style="color:var(--teal)">${DOLLAR_FMT(summary.gpu_hourly_rate)}/hr</span>
+        </div>
+      </div>
+    `;
+
+    // Model pricing table
+    const models = await fetch('/api/cost/models').then(r=>r.json());
+    if(models.data){
+      $('tbl-model-pricing').innerHTML = models.data.map(m=>{
+        const tierClass = m.tier==='high'?'var(--red)':m.tier==='medium'?'var(--mauve)':'var(--blue)';
+        return `<tr>
+          <td>${m.display_name}</td>
+          <td><span class="badge" style="background:${tierClass}20;color:${tierClass}">${m.tier.toUpperCase()}</span></td>
+          <td>$${(m.input_per_1m||0).toFixed(2)}</td>
+          <td>$${(m.output_per_1m||0).toFixed(2)}</td>
+        </tr>`;
+      }).join('');
+    }
+
+    // Daily cost chart
+    const dailyRes = await fetch(`/api/cost/daily?days=${costDays}`).then(r=>r.json());
+    const dailyCostData = dailyRes.data||[];
+    if(dailyCostData.length){
+      renderCostCharts(dailyCostData);
+    }
+
+  }catch(e){ console.warn('cost load error',e); }
+}
+
+function renderCostCharts(data){
+  const labels = data.map(d=>d.date.slice(5)); // MM-DD
+
+  // Daily cost comparison bar chart
+  costDailyChart = mkChart('chartCostDaily',{
+    type:'bar',
+    data:{ labels, datasets:[
+      { label:'Cloud High', data:data.map(d=>d.cloud_high), backgroundColor:'rgba(243,139,168,.7)', borderRadius:3 },
+      { label:'Cloud Mid',  data:data.map(d=>d.cloud_medium), backgroundColor:'rgba(203,166,247,.7)', borderRadius:3 },
+      { label:'Cloud Low',  data:data.map(d=>d.cloud_low),  backgroundColor:'rgba(137,180,250,.7)', borderRadius:3 },
+      { label:'Your GPU',   data:data.map(d=>d.local_gpu),  backgroundColor:'rgba(148,226,213,.8)', borderRadius:3 },
+    ]},
+    options:{
+      ...CHART_DEFAULTS,
+      plugins:{
+        legend:{ display:true, labels:{ color:'#7c8ab5', font:{size:10} } },
+        tooltip:{ mode:'index', intersect:false, callbacks:{
+          label(ctx){ return ctx.dataset.label+': '+DOLLAR_FMT(ctx.parsed.y); }
+        }}
+      },
+      scales:{
+        x:{...CHART_DEFAULTS.scales.x},
+        y:{...CHART_DEFAULTS.scales.y, beginAtZero:true, title:{display:true,text:'USD ($)',color:'#7c8ab5',font:{size:10}},
+          ticks:{...CHART_DEFAULTS.scales.y.ticks, callback(v){return '$'+v;}} }
+      }
+    }
+  });
+
+  // Cumulative savings chart
+  let cumHigh=0, cumMid=0, cumLocal=0;
+  const cumHighArr=[], cumMidArr=[], cumLocalArr=[];
+  for(const d of data){
+    cumHigh += d.cloud_high||0;
+    cumMid  += d.cloud_medium||0;
+    cumLocal+= d.local_gpu||0;
+    cumHighArr.push(cumHigh);
+    cumMidArr.push(cumMid);
+    cumLocalArr.push(cumLocal);
+  }
+
+  savingsChart = mkChart('chartSavings',{
+    type:'line',
+    data:{ labels, datasets:[
+      { label:'Cumul. Cloud High', data:cumHighArr, borderColor:'#f38ba8', backgroundColor:'rgba(243,139,168,.08)', fill:true, tension:.35, pointRadius:0, borderWidth:2 },
+      { label:'Cumul. Cloud Mid',  data:cumMidArr,  borderColor:'#cba6f7', backgroundColor:'rgba(203,166,247,.08)', fill:true, tension:.35, pointRadius:0, borderWidth:2 },
+      { label:'Cumul. Your GPU',   data:cumLocalArr, borderColor:'#94e2d5', backgroundColor:'rgba(148,226,213,.08)', fill:true, tension:.35, pointRadius:0, borderWidth:2 },
+    ]},
+    options:{
+      ...CHART_DEFAULTS,
+      plugins:{
+        legend:{ display:true, labels:{ color:'#7c8ab5', font:{size:10} } },
+        tooltip:{ mode:'index', intersect:false, callbacks:{
+          label(ctx){ return ctx.dataset.label+': '+DOLLAR_FMT(ctx.parsed.y); }
+        }}
+      },
+      scales:{
+        x:{...CHART_DEFAULTS.scales.x},
+        y:{...CHART_DEFAULTS.scales.y, beginAtZero:true, title:{display:true,text:'cumulative USD ($)',color:'#7c8ab5',font:{size:10}},
+          ticks:{...CHART_DEFAULTS.scales.y.ticks, callback(v){return '$'+v;}} }
+      }
+    }
+  });
+}
+
+async function loadModelPricing(){
+  try{
+    const models = await fetch('/api/cost/models').then(r=>r.json());
+    if(models.data){
+      $('tbl-model-pricing').innerHTML = models.data.map(m=>{
+        const tierClass = m.tier==='high'?'var(--red)':m.tier==='medium'?'var(--mauve)':'var(--blue)';
+        return `<tr>
+          <td>${m.display_name}</td>
+          <td><span class="badge" style="background:${tierClass}20;color:${tierClass}">${m.tier.toUpperCase()}</span></td>
+          <td>$${(m.input_per_1m||0).toFixed(2)}</td>
+          <td>$${(m.output_per_1m||0).toFixed(2)}</td>
+        </tr>`;
+      }).join('');
+    }
+  }catch(e){}
+}
+
+// Patch existing showPage to handle cost tab
+
+// Update live session cost estimate in KPI strip
+function updateSessionCost(cost_obj){
+  if(!cost_obj) return;
+  $('kpi-cost').textContent = DOLLAR_FMT(cost_obj.medium);
+  $('kpi-cost-sub').innerHTML = `H: ${DOLLAR_FMT(cost_obj.high)} &middot; M: ${DOLLAR_FMT(cost_obj.medium)} &middot; L: ${DOLLAR_FMT(cost_obj.low)}`;
+}
+
+// Periodic cost refresh when on cost tab (every 10s)
+setInterval(()=>{
+  if($('page-cost')?.classList.contains('active')) loadCostPage();
+}, 10000);
+
+loadModelPricing();
 </script>
 </body>
 </html>

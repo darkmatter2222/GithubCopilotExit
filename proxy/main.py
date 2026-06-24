@@ -63,6 +63,7 @@ DISABLE_THINKING_FOR_TOOLS = os.environ.get("DISABLE_THINKING_FOR_TOOLS", "true"
 
 from tracker import TokenTracker, set_db
 from db import SessionDB
+import cost_engine
 
 tracker = TokenTracker()
 session_db = SessionDB()
@@ -376,12 +377,87 @@ async def get_stats_summary(days: int = 30):
     return JSONResponse(content=data)
 
 
+# ── Cost analysis API ─────────────────────────────────────────────────
+
+@app.get("/api/cost/models")
+async def get_cost_models():
+    """Return all cloud model pricing references."""
+    return JSONResponse(content={"data": cost_engine.format_pricing_table()})
+
+
+@app.get("/api/cost/summary")
+async def get_cost_summary(days: int = 30):
+    """Aggregate cost analysis over the last N days."""
+    raw = await session_db.get_cost_summary(days=days)
+    if not raw:
+        return JSONResponse(content={})
+    input_tokens = raw.get("total_input_tokens", 0) or 0
+    output_tokens = raw.get("total_output_tokens", 0) or 0
+    duration_secs = raw.get("total_duration_secs", 0) or 0
+
+    # Compute cloud costs per tier and per model
+    tier_costs = cost_engine.get_tier_summary(input_tokens, output_tokens)
+    local_cost = cost_engine.get_gpu_cost_for_duration(duration_secs)
+
+    return JSONResponse(content={
+        "days": days,
+        "total_requests": raw.get("total_requests", 0),
+        "total_input_tokens": input_tokens,
+        "total_output_tokens": output_tokens,
+        "total_duration_hours": round(duration_secs / 3600, 2),
+        "cloud_costs": {
+            tier: cost_engine.dollar_fmt(v) for tier, v in tier_costs.items()
+        },
+        "cloud_costs_raw": tier_costs,
+        "per_model_costs_raw": {
+            mid: cost_engine.calculate_cloud_cost(input_tokens, output_tokens, mid)
+            for mid in cost_engine.MODEL_PRICING
+        },
+        "local_gpu_cost": round(local_cost, 4),
+        "local_gpu_cost_fmt": cost_engine.dollar_fmt(local_cost),
+        "gpu_hourly_rate": round(cost_engine.get_gpu_hourly_cost(), 4),
+        "savings_vs_high": round(tier_costs["high"] - local_cost, 4) if tier_costs["high"] > local_cost else 0,
+        "savings_vs_medium": round(tier_costs["medium"] - local_cost, 4) if tier_costs["medium"] > local_cost else 0,
+    })
+
+
+@app.get("/api/cost/daily")
+async def get_cost_daily(days: int = 30):
+    """Daily cost breakdown for charting."""
+    rows = await session_db.get_cost_by_day(days=days)
+    enriched = []
+    for row in rows:
+        in_t = row.get("total_input_tokens", 0) or 0
+        out_t = row.get("total_output_tokens", 0) or 0
+        dur = row.get("total_duration_secs", 0) or 0
+        enriched.append({
+            "date": row["date"],
+            "input_tokens": in_t,
+            "output_tokens": out_t,
+            "cloud_high": round(cost_engine.calculate_cloud_cost_by_tier(in_t, out_t, "high"), 4),
+            "cloud_medium": round(cost_engine.calculate_cloud_cost_by_tier(in_t, out_t, "medium"), 4),
+            "cloud_low": round(cost_engine.calculate_cloud_cost_by_tier(in_t, out_t, "low"), 4),
+            "local_gpu": round(cost_engine.get_gpu_cost_for_duration(dur), 4),
+        })
+    return JSONResponse(content={"count": len(enriched), "data": enriched})
+
+
 # ── Live stats ─────────────────────────────────────────────────────────
 
 @app.get("/stats")
 async def stats_json():
     """Real-time token throughput stats (machine-readable JSON)."""
-    return tracker.get_active_summary()
+    data = tracker.get_active_summary()
+    # Inject live session cost estimates
+    total_in = data.get("total_input_tokens", 0) or 0
+    total_out = data.get("total_output_tokens", 0) or 0
+    tier_costs = cost_engine.get_tier_summary(total_in, total_out)
+    data["live_session_cost"] = {
+        "high": round(tier_costs["high"], 4),
+        "medium": round(tier_costs["medium"], 4),
+        "low": round(tier_costs["low"], 4),
+    }
+    return data
 
 
 @app.get("/dashboard", response_class=HTMLResponse)
