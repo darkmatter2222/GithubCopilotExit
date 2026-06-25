@@ -66,10 +66,105 @@ DISABLE_THINKING_FOR_TOOLS = os.environ.get("DISABLE_THINKING_FOR_TOOLS", "true"
 from tracker import TokenTracker, set_db
 from db import SessionDB
 import cost_engine
+import psutil
 
 tracker = TokenTracker()
 session_db = SessionDB()
 set_db(session_db)
+
+# ── System stats cache (refresh every 5s to avoid expensive calls) ───
+_last_sys_stats: dict = {}
+_last_sys_stats_ts: float = 0.0
+SYS_STATS_TTL = 5.0
+
+async def get_system_stats() -> dict:
+    """Gather CPU, RAM, disk, GPU stats and Ollama model info.
+    Cached for SYS_STATS_TTL seconds to avoid expensive subprocess calls."""
+    now = time.time()
+    if _last_sys_stats and (now - _last_sys_stats_ts) < SYS_STATS_TTL:
+        return _last_sys_stats
+
+    result = {}
+
+    # ── psutil: CPU, RAM, disk ───────────────────────────────
+    try:
+        cpu_pct = psutil.cpu_percent(interval=0.2)
+        mem = psutil.virtual_memory()
+        disk = psutil.disk_usage('/')
+        result["cpu_percent"] = round(cpu_pct, 1)
+        result["ram_used_gb"] = round(mem.used / (1024**3), 1)
+        result["ram_total_gb"] = round(mem.total / (1024**3), 1)
+        result["ram_percent"] = mem.percent
+        result["disk_used_gb"] = round(disk.used / (1024**3), 1)
+        result["disk_total_gb"] = round(disk.total / (1024**3), 1)
+        result["disk_percent"] = disk.percent
+    except Exception as e:
+        log.warning(f"psutil stats failed: {e}")
+
+    # ── Ollama running models + VRAM usage ──────────────────
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.get(f"{OLLAMA_BASE}/api/tags")
+            if r.status_code == 200:
+                models_data = r.json().get("models", [])
+                result["models"] = [
+                    {
+                        "name": m.get("name", "?").split(":")[0],  # strip quant tag
+                        "full_name": m.get("name", "?"),
+                        "size_mb": round(m.get("size", 0) / (1024**2), 0),
+                        "digest": m.get("digest", "?")[:12],
+                    }
+                    for m in models_data
+                ]
+            else:
+                result["models"] = []
+
+            # Try Ollama system info endpoint (available on newer versions)
+            try:
+                sys_r = await client.get(f"{OLLAMA_BASE}/api/system")
+                if sys_r.status_code == 200:
+                    sys_info = sys_r.json()
+                    result["ollama_gpu"] = sys_info.get("gpu", {})
+            except Exception:
+                pass
+    except Exception as e:
+        log.warning(f"Ollama tags request failed: {e}")
+        result["models"] = []
+
+    # ── nvidia-smi GPU stats (best effort, DGX Spark & RTX) ────
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "nvidia-smi",
+            "--query-gpu=utilization.gpu,memory.used,memory.total,name,temperature.gpu",
+            "--format=csv,noheader,nounits",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await proc.communicate()
+        lines = stdout.decode().strip().split("\n")
+        gpu_gpus = []
+        for line in lines:
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) >= 5:
+                try:
+                    gpu_gpus.append({
+                        "name": parts[3],
+                        "util_percent": int(parts[0]),
+                        "mem_used_mb": int(parts[1]),
+                        "mem_total_mb": int(parts[2]),
+                        "temp_c": int(parts[4]),
+                    })
+                except (ValueError, IndexError):
+                    pass
+        result["gpus"] = gpu_gpus
+    except Exception:
+        # nvidia-smi not available (local Windows fallback)
+        result["gpus"] = []
+
+    _last_sys_stats.clear()
+    _last_sys_stats.update(result)
+    _last_sys_stats_ts = time.time()
+    return _last_sys_stats
 
 
 @asynccontextmanager
