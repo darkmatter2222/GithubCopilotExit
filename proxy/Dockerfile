@@ -11,7 +11,8 @@ COPY *.py ./
 # Copy dashboard template
 COPY dashboard.html ./
 
-ENV OLLAMA_BASE_URL=http://ollama:11434
+ENV VLLM_BASE_URL=http://localhost:8000
+ENV VLLM_CODER_BASE_URL=http://localhost:8002
 ENV SERVED_MODEL_NAME=qwen3
 ENV MIN_TEMPERATURE=0.6
 

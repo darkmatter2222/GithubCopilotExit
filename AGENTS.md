@@ -47,7 +47,7 @@
 | OS | Ubuntu 24.04 LTS (aarch64/ARM) |
 | CPU | ARM aarch64, 20 threads |
 | Ollama | v0.30.10 at `/usr/local/bin/ollama` (ARM native binary) |
-| Model | `qwen3.6:27b-mtp-q4_K_M` (~17 GB Q4 quantized) |
+| Models | `qwen3.6:27b-mtp-q4_K_M` (~17 GB Q4) + `qwen3-coder:latest` (~18 GB Q4) |
 | Alias | `qwen3` with num_ctx=131000 via Modelfile |
 | Proxy | Docker container `gcopilot-proxy` (port 8001, host network) |
 | MongoDB | Connected to `192.168.86.48:27017` (persistent analytics) |

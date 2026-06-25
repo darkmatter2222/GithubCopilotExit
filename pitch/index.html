@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>The Case for DGX Spark</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+  :root {
+    --bg-primary: #0a0a0f;
+    --bg-card: rgba(255,255,255,0.04);
+    --accent-green: #00ff88;
+    --accent-teal: #00d4aa;
+    --accent-cyan: #00b4d8;
+    --accent-gold: #ffd700;
+    --accent-red: #ff6b6b;
+    --accent-purple: #a855f7;
+    --text-primary: #f0f0f5;
+    --text-secondary: #a0a0b0;
+    --text-dim: #606070;
+    --border-subtle: rgba(255,255,255,0.08);
+  }
+
+  * { margin:0; padding:0; box-sizing:border-box; }
+
+  html, body {
+    width:100%; height:100dvh;
+    overflow:hidden;
+    font-family:'Inter',system-ui,sans-serif;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    overscroll-behavior: none;
+    -webkit-overflow-scrolling: auto;
+  }
+
+  .deck {
+    width:100vw; height:100dvh;
+    position:relative; overflow:hidden;
+  }
+
+  .slide {
+    position:absolute; top:0; left:0;
+    width:100%; height:100%;
+    display:flex; flex-direction:column;
+    justify-content:center; align-items:center;
+    padding: clamp(32px, 8vh, 60px) clamp(16px, 5vw, 40px);
+    padding-top: clamp(40px, 10vh, 70px);
+    padding-bottom: clamp(56px, 12vh, 80px);
+    opacity:0;
+    transform: translateX(60px);
+    transition: all 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+    pointer-events:none;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .slide.active {
+    opacity:1; transform:translateX(0);
+    pointer-events:auto;
+  }
+  .slide.exit-left { opacity:0; transform:translateX(-60px); }
+
+  /* ── Progress Bar ── */
+  .progress-bar {
+    position:fixed; top:0; left:0; height:3px;
+    background: linear-gradient(90deg, var(--accent-green), var(--accent-cyan));
+    z-index:1000; transition: width 0.3s ease;
+  }
+
+  .slide-counter {
+    position:fixed; bottom:12px; right:16px;
+    font-family:'JetBrains Mono',monospace;
+    font-size:12px; color: var(--text-dim); z-index:1000;
+  }
+
+  /* ── Navigation Arrows ── */
+  .nav-arrow {
+    position:fixed; top:50%; transform:translateY(-50%);
+    width:44px; height:44px;
+    border:none; border-radius:50%;
+    background: rgba(255,255,255,0.08);
+    color: var(--text-secondary); font-size:18px; cursor:pointer;
+    z-index:1000; transition: all 0.2s ease;
+    display:flex; align-items:center; justify-content:center;
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  }
+  .nav-arrow:hover { background: rgba(255,255,255,0.14); color: var(--text-primary); }
+  .nav-arrow.disabled { opacity:0.15; pointer-events:none; }
+  .nav-prev { left:8px; }
+  .nav-next { right:8px; }
+
+  /* ── Typography (responsive) ── */
+  h1.title {
+    font-size: clamp(32px, 9vw, 56px);
+    font-weight:900; line-height:1.05; letter-spacing:-1.5px;
+    margin-bottom:8px; text-align:center;
+    background: linear-gradient(135deg, var(--accent-green), var(--accent-cyan));
+    -webkit-background-clip:text; -webkit-text-fill-color:transparent;
+  }
+
+  h2 {
+    font-size: clamp(24px, 6.5vw, 40px);
+    font-weight:700; letter-spacing:-1px; line-height:1.15; margin-bottom:10px; text-align:center;
+  }
+
+  .subtitle {
+    font-size: clamp(14px, 3.8vw, 20px);
+    font-weight:300; color: var(--text-secondary); line-height:1.5; text-align:center; padding:0 8px;
+  }
+
+  .tagline {
+    font-size: clamp(12px, 3.2vw, 15px);
+    color:var(--text-dim); margin-top:8px; letter-spacing:0.3px; text-align:center;
+  }
+
+  /* ── KPI Cards ── */
+  .kpi-grid {
+    display:grid; gap:12px; width:100%; max-width:900px;
+    margin:16px auto;
+  }
+  .kpi-grid.cols-3 { grid-template-columns: repeat(3,1fr); }
+  .kpi-grid.cols-4 { grid-template-columns: repeat(2,1fr); }
+
+  @media (min-width: 768px) {
+    .kpi-grid.cols-4 { grid-template-columns: repeat(4,1fr); }
+  }
+
+  .kpi-card {
+    background: var(--bg-card); border:1px solid var(--border-subtle);
+    border-radius:12px; padding:clamp(10px,2.5vw,16px) clamp(8px,2vw,16px);
+    text-align:center;
+  }
+
+  .kpi-value {
+    font-family:'JetBrains Mono',monospace;
+    font-size: clamp(20px, 5.5vw, 32px);
+    font-weight:700; margin-bottom:2px;
+  }
+
+  .kpi-label {
+    font-size: clamp(10px, 2.8vw, 13px);
+    color: var(--text-secondary); text-transform:uppercase;
+    letter-spacing:0.8px; font-weight:500;
+  }
+
+  .green  { color:var(--accent-green); }
+  .cyan   { color:var(--accent-cyan); }
+  .gold   { color:var(--accent-gold); }
+  .red    { color:var(--accent-red); }
+  .purple { color:var(--accent-purple); }
+
+  /* ── Content ── */
+  .slide-content { max-width:1000px; text-align:center; width:100%; }
+
+  .section-desc {
+    font-size: clamp(13px, 3.5vw, 16px);
+    color: var(--text-secondary); line-height:1.55; margin-bottom:18px; padding:0 4px;
+  }
+
+  /* ── Comparison Table ── */
+  .comparison-table { width:100%; max-width:700px; margin:16px auto; border-collapse:collapse; }
+  .comparison-table th {
+    padding:8px 10px; text-align:left; color: var(--text-dim);
+    font-weight:600; text-transform:uppercase; letter-spacing:0.8px;
+    font-size: clamp(9px, 2.5vw, 12px); border-bottom:1px solid var(--border-subtle);
+  }
+  .comparison-table td {
+    padding:clamp(6px,1.8vw,12px) 10px;
+    border-bottom:1px solid rgba(255,255,255,0.03);
+    font-size: clamp(12px, 3.2vw, 15px);
+  }
+  .comparison-table .mono { font-family:'JetBrains Mono',monospace; font-weight:500; }
+
+  /* ── Divider ── */
+  .divider {
+    width:clamp(40px,12vw,60px); height:3px; margin:14px auto;
+    border-radius:2px;
+    background: linear-gradient(90deg, var(--accent-green), var(--accent-cyan));
+  }
+
+  /* ── Badge ── */
+  .badge {
+    display:inline-block; padding:5px 12px; border-radius:20px;
+    font-size: clamp(9px, 2.5vw, 12px); font-weight:600;
+    text-transform:uppercase; letter-spacing:1px; margin-bottom:14px;
+  }
+  .badge-green { background:rgba(0,255,136,0.1); color:var(--accent-green); border:1px solid rgba(0,255,136,0.2); }
+  .badge-gold  { background:rgba(255,215,0,0.1); color:var(--accent-gold); border:1px solid rgba(255,215,0,0.2); }
+  .badge-red   { background:rgba(255,107,107,0.1); color:var(--accent-red); border:1px solid rgba(255,107,107,0.2); }
+
+  /* ── Bullet List ── */
+  .bullet-list { text-align:left; max-width:600px; margin:14px auto; list-style:none; padding:0 8px; }
+  .bullet-list li {
+    padding:8px 0; font-size: clamp(13px, 3.5vw, 15px);
+    color:var(--text-secondary); padding-left:20px; position:relative; line-height:1.45;
+  }
+  .bullet-list li::before {
+    content:''; position:absolute; left:0; top:14px;
+    width:7px; height:7px; border-radius:50%; background: var(--accent-green);
+  }
+
+  /* ── Deal Cards ── */
+  .deal-grid {
+    display:grid; grid-template-columns: repeat(2,1fr);
+    gap:14px; width:100%; max-width:800px; margin:16px auto;
+  }
+  @media (min-width:768px) {
+    .deal-grid { grid-template-columns: repeat(4,1fr); }
+  }
+  .deal-card {
+    background:var(--bg-card); border:1px solid var(--border-subtle);
+    border-radius:14px; padding:clamp(14px,3vw,22px) clamp(10px,2.5vw,18px); text-align:center;
+  }
+  .deal-card .emoji { font-size: clamp(24px,6vw,34px); margin-bottom:8px; display:block;}
+  .deal-card h4 { font-size: clamp(12px,3.2vw,15px); font-weight:600; margin-bottom:4px; }
+  .deal-card p { font-size: clamp(11px,2.8vw,13px); color:var(--text-secondary); line-height:1.45; }
+
+  /* ── Bar Chart ── */
+  .bar-chart { width:100%; max-width:700px; margin:16px auto; }
+  .bar-row { display:flex; align-items:center; margin-bottom:10px; gap:10px; }
+  .bar-label {
+    width:clamp(90px,25vw,140px); text-align:right; font-size: clamp(11px,3vw,14px);
+    font-weight:500; color:var(--text-secondary); flex-shrink:0;
+  }
+  .bar-track {
+    flex:1; height:clamp(20px,5vw,28px); background:rgba(255,255,255,0.03);
+    border-radius:6px; overflow:hidden; position:relative;
+  }
+  .bar-fill {
+    height:100%; border-radius:6px; display:flex; align-items:center; padding-left:8px;
+    font-family:'JetBrains Mono',monospace; font-size: clamp(10px,2.8vw,13px); font-weight:600;
+    color:#000; transition: width 1s ease;
+  }
+
+  /* ── CTA Number ── */
+  .cta-number {
+    font-family:'JetBrains Mono',monospace;
+    font-size: clamp(40px, 12vw, 72px);
+    font-weight:900;
+    background: linear-gradient(135deg, var(--accent-green), var(--accent-cyan));
+    -webkit-background-clip:text; -webkit-text-fill-color:transparent;
+  }
+
+  /* ── Glow Line ── */
+  .glow-line {
+    width:clamp(100px,30vw,200px); height:2px; margin:16px auto;
+    background: linear-gradient(90deg, transparent, var(--accent-green), var(--accent-cyan), transparent);
+    animation: glow-pulse 3s ease-in-out infinite;
+  }
+  @keyframes glow-pulse {
+    0%,100%{ opacity:0.5; width:clamp(100px,30vw,200px); }
+    50%{ opacity:1; width:clamp(140px,36vw,280px); }
+  }
+
+  /* ── Spec detail rows ── */
+  .spec-row {
+    display:flex; justify-content:space-between; align-items:center;
+    padding:6px 0; border-bottom:1px solid rgba(255,255,255,0.03);
+    font-size:clamp(12px,3.2vw,15px);
+  }
+  .spec-label { color:var(--text-secondary); }
+  .spec-val  { font-family:'JetBrains Mono',monospace; font-weight:600; }
+
+  /* ── Swipe hint ── */
+  .swipe-hint {
+    position:fixed; bottom:12px; left:50%; transform:translateX(-50%);
+    font-size:11px; color:var(--text-dim); z-index:999;
+    opacity:0.7; animation: fade-hint 4s ease forwards;
+  }
+  @keyframes fade-hint { 0%,60%{opacity:0.7} 100%{opacity:0} }
+
+  /* ── Hardware image (DGX Spark exploded view) ── */
+  .hardware-img {
+    width: clamp(280px, 90vw, 640px);
+    max-height: clamp(200px, 50vh, 500px);
+    object-fit: contain;
+    margin: 12px auto;
+    display: block;
+    border-radius: 8px;
+  }
+
+  /* ── Charcuterie image (Deal slide) ── */
+  .charcuterie-img {
+    width: clamp(200px, 65vw, 400px);
+    height: clamp(180px, 45vh, 360px);
+    object-fit: cover;
+    margin: 10px auto;
+    display: block;
+    border-radius: 14px;
+    border: 2px solid rgba(255, 215, 0, 0.3);
+    box-shadow: 0 4px 24px rgba(255, 215, 0, 0.15);
+  }
+
+  /* ── Token Trajectory Charts ── */
+  .chart-container {
+    width: 100%; max-width: 900px; margin: 10px auto;
+    display: grid; gap: 10px;
+  }
+  .chart-row {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+  }
+  @media (max-width: 640px) {
+    .chart-row { grid-template-columns: 1fr; }
+  }
+  .chart-card {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--border-subtle);
+    border-radius: 14px;
+    padding: clamp(10px, 2.5vw, 16px);
+    position: relative;
+  }
+  .chart-card h3 {
+    font-size: clamp(11px, 2.8vw, 13px);
+    font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.8px; color: var(--text-secondary);
+    margin-bottom: 8px; text-align: center;
+  }
+  .chart-canvas {
+    width: 100%; height: clamp(120px, 25vh, 200px);
+    display: block; border-radius: 8px;
+  }
+  .forecast-full-width {
+    grid-column: 1 / -1;
+  }
+  .chart-canvas-wide {
+    width: 100%; height: clamp(140px, 30vh, 240px);
+    display: block; border-radius: 8px;
+  }
+  .chart-kpi-strip {
+    display: flex; justify-content: center; gap: clamp(16px, 5vw, 32px);
+    margin: 8px auto; flex-wrap: wrap;
+  }
+  .chart-kpi {
+    text-align: center;
+  }
+  .chart-kpi-val {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: clamp(18px, 5vw, 28px);
+    font-weight: 700;
+  }
+  .chart-kpi-lbl {
+    font-size: clamp(9px, 2.4vw, 11px);
+    color: var(--text-dim); text-transform: uppercase;
+    letter-spacing: 0.6px;
+  }
+  @keyframes chart-glow {
+    0%,100% { filter: drop-shadow(0 0 3px rgba(0,255,136,0.3)); }
+    50% { filter: drop-shadow(0 0 8px rgba(0,255,136,0.5)); }
+  }
+</style>
+</head>
+<body>
+
+<div class="progress-bar" id="progressBar"></div>
+<button class="nav-arrow nav-prev" id="prevBtn">&#9664;</button>
+<button class="nav-arrow nav-next" id="nextBtn">&#9654;</button>
+<div class="slide-counter" id="slideCounter"></div>
+
+<div class="deck" id="deck">
+
+<!-- ═══════ 1: Title ═══════ -->
+<div class="slide active" data-slide="0">
+  <div class="slide-content">
+    <div style="margin-bottom:24px;font-size:clamp(36px,10vw,52px);">⚡</div>
+    <h1 class="title">The Case For<br>DGX Spark</h1>
+    <div class="glow-line"></div>
+    <p class="subtitle" style="margin-top:16px;">Why upgrading our home AI compute makes financial sense</p>
+    <p class="tagline">Based on 30 days of real usage data</p>
+  </div>
+</div>
+
+<!-- ═══════ 2: Current Situation ═══════ -->
+<div class="slide" data-slide="1">
+  <div class="slide-content">
+    <span class="badge badge-green">WHERE WE ARE NOW</span>
+    <h2>AI Already Runs<br>Locally, At No Cost</h2>
+    <p class="section-desc">Every day I code with an AI assistant — tool calling, editing, testing — powered by a GPU in our machine. Zero API bills.</p>
+    <div class="kpi-grid cols-4">
+      <div class="kpi-card"><div class="kpi-value green">1,991</div><div class="kpi-label">Requests / 30d</div></div>
+      <div class="kpi-card"><div class="kpi-value cyan">263M</div><div class="kpi-label">Total Tokens</div></div>
+      <div class="kpi-card"><div class="kpi-value" style="color:var(--text-primary)">&sim;75K</div><div class="kpi-label">Avg Prompt Size</div></div>
+      <div class="kpi-card"><div class="kpi-value gold">$0</div><div class="kpi-label">API Cost / Mo</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ 3: Cloud Cost ═══════ -->
+<div class="slide" data-slide="2">
+  <div class="slide-content">
+    <span class="badge badge-red">THE COST OF CLOUD</span>
+    <h2>What These Tokens Cost<br>On Cloud APIs</h2>
+    <p class="section-desc">Same workload, last 30 days, sent through a cloud provider instead of running locally.</p>
+    <div class="kpi-grid cols-3">
+      <div class="kpi-card" style="border-color:rgba(255,107,107,0.2);"><div class="kpi-value red">$2,564/mo</div><div class="kpi-label">Flagship (GPT-5.5)</div></div>
+      <div class="kpi-card" style="border-color:rgba(168,85,247,0.2);"><div class="kpi-value purple">$257/mo</div><div class="kpi-label">Mid-Tier</div></div>
+      <div class="kpi-card" style="border-color:rgba(0,180,216,0.2);"><div class="kpi-value cyan">$28/mo</div><div class="kpi-label">Lowest Tier</div></div>
+    </div>
+    <p class="tagline">vs. what we actually pay: <strong class="gold">$1.40 / month</strong></p>
+  </div>
+</div>
+
+<!-- ═══════ 4: The Hardware ═══════ -->
+<div class="slide" data-slide="3">
+  <div class="slide-content">
+    <span class="badge badge-green">THE HARDWARE</span>
+    <h2>NVIDIA DGX Spark<br>GB10 Blackwell Superchip</h2>
+    <p class="section-desc">The same Blackwell architecture that powers data centers — in a desktop board.</p>
+    <img src="dgx_spark.jpg" alt="DGX Spark Exploded View" class="hardware-img" loading="eager" />
+    <div style="max-width:500px;margin:8px auto 0;">
+      <div class="spec-row"><span class="spec-label">Memory</span><span class="spec-val cyan">128 GB LPDDR5x</span></div>
+      <div class="spec-row"><span class="spec-label">Bandwidth</span><span class="spec-val">273 GB/s</span></div>
+      <div class="spec-row"><span class="spec-label">CUDA Cores</span><span class="spec-val green">6,144</span></div>
+      <div class="spec-row"><span class="spec-label">Fine-tuning</span><span class="spec-val gold">Up to 70B params</span></div>
+      <div class="spec-row"><span class="spec-label">Inference</span><span class="spec-val">Up to 200B params</span></div>
+      <div class="spec-row"><span class="spec-label">TDP</span><span class="spec-val" style="color:var(--text-secondary)">140W</span></div>
+    </div>
+    <p class="tagline" style="margin-top:8px;">Server-class AI compute. Our home.</p>
+  </div>
+</div>
+
+<!-- ═══════ 5: Why Upgrade ═══════ -->
+<div class="slide" data-slide="4">
+  <div class="slide-content">
+    <span class="badge badge-gold">WHY UPGRADE?</span>
+    <h2>128 GB Memory<br>Opens A New World</h2>
+    <p class="section-desc">Our RTX 5090 has 32 GB VRAM. The DGX Spark has 4× the memory — models that physically can't load now will fit.</p>
+    <div class="bar-chart">
+      <div class="bar-row"><div class="bar-label">RTX 5090</div><div class="bar-track"><div class="bar-fill" style="width:25%;background:var(--text-dim);color:#fff;">32 GB ✓</div></div></div>
+      <div class="bar-row"><div class="bar-label">DGX Spark</div><div class="bar-track"><div class="bar-fill" style="width:100%;background:linear-gradient(90deg,var(--accent-green),var(--accent-cyan));">128 GB ✓✓✓</div></div></div>
+    </div>
+    <div class="kpi-grid cols-3" style="margin-top:14px;">
+      <div class="kpi-card"><div class="kpi-value green" style="font-size:clamp(16px,4.5vw,24px);">70B</div><div class="kpi-label">Fine-Tune Params</div></div>
+      <div class="kpi-card"><div class="kpi-value cyan" style="font-size:clamp(16px,4.5vw,24px);">200B</div><div class="kpi-label">Inference Params</div></div>
+      <div class="kpi-card"><div class="kpi-value gold" style="font-size:clamp(16px,4.5vw,24px);">∞</div><div class="kpi-label">Sessions Concurrent</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ 6: Benefits for Both ═══════ -->
+<div class="slide" data-slide="5">
+  <div class="slide-content">
+    <span class="badge badge-gold">SHARED BENEFITS</span>
+    <h2>This Is For<br>Both Of Us</h2>
+    <p class="section-desc">Today this GPU only serves me. The DGX Spark is powerful enough to be a shared family AI resource.</p>
+    <div class="kpi-grid cols-3">
+      <div class="kpi-card" style="border-color:rgba(0,255,136,0.15);"><div class="emoji" style="font-size:clamp(20px,5vw,28px);">🤖</div><div class="kpi-label">Your AI Assistant<br/>Running Concurrently</div></div>
+      <div class="kpi-card" style="border-color:rgba(0,180,216,0.15);"><div class="emoji" style="font-size:clamp(20px,5vw,28px);">🔒</div><div class="kpi-label">Total Privacy<br/>Zero Data Leaves Home</div></div>
+      <div class="kpi-card" style="border-color:rgba(255,215,0,0.15);"><div class="emoji" style="font-size:clamp(20px,5vw,28px);">💰</div><div class="kpi-label">No Monthly Fees<br/>Compute For Years</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ 7: ROI ═══════ -->
+<div class="slide" data-slide="6">
+  <div class="slide-content">
+    <span class="badge badge-green">ROI ANALYSIS</span>
+    <h2>Pays For Itself<br>In Months, Not Years</h2>
+    <p class="section-desc">At ~$4,500 total (hardware + extended warranty), here's the payback vs. cloud cost avoidance:</p>
+    <table class="comparison-table">
+      <thead><tr><th>vs. Cloud Tier</th><th style="text-align:center;">Monthly Save</th><th style="text-align:center;">Payback</th></tr></thead>
+      <tbody>
+        <tr><td>Flagship ($2,564/mo)</td><td class="mono green" style="text-align:center;">$2,564</td><td class="mono green" style="text-align:center;">< 1 month ✓</td></tr>
+        <tr><td>Mid-tier ($257/mo)</td><td class="mono cyan" style="text-align:center;">$257</td><td class="mono cyan" style="text-align:center;">~18 months ✓</td></tr>
+        <tr><td>Low tier ($28/mo)</td><td class="mono gold" style="text-align:center;">$28</td><td class="mono gold" style="text-align:center;">~160 mo</td></tr>
+      </tbody>
+    </table>
+    <p class="tagline" style="margin-top:10px;">Even mid-tier payback is under 2 years. Flagship? Instant.</p>
+  </div>
+</div>
+
+<!-- ═══════ 8: Daily Demand ═══════ -->
+<div class="slide" data-slide="7">
+  <div class="slide-content">
+    <span class="badge badge-gold">AND DEMAND IS GROWING</span>
+    <h2>Already Running<br>~12 Hours/Day</h2>
+    <p class="section-desc">Just today alone, the GPU was busy processing thousands of tokens. This isn't a hobby — it's daily infrastructure.</p>
+    <div class="kpi-grid cols-3">
+      <div class="kpi-card"><div class="kpi-value green" style="font-size:clamp(20px,5.5vw,36px);">419</div><div class="kpi-label">Requests Today</div></div>
+      <div class="kpi-card"><div class="kpi-value cyan" style="font-size:clamp(20px,5.5vw,36px);">28.3M</div><div class="kpi-label">Input Tokens Today</div></div>
+      <div class="kpi-card"><div class="kpi-value gold" style="font-size:clamp(20px,5.5vw,36px);">~12h</div><div class="kpi-label">GPU Hot / Day</div></div>
+    </div>
+    <p class="tagline">More horsepower = tasks complete in seconds, not minutes.</p>
+  </div>
+</div>
+
+<!-- ═══════ 9: Token Trajectory (NEW) ═══════ -->
+<div class="slide" data-slide="8">
+  <div class="slide-content">
+    <span class="badge badge-green">📈 TOKEN TRAJECTORY</span>
+    <h2>Demand Is Exploding<br>Where Does It Go?</h2>
+    <p class="section-desc">30 days of real token data. Projected forward — this is how fast AI usage scales once you have the power.</p>
+
+    <div class="chart-kpi-strip">
+      <div class="chart-kpi"><div class="chart-kpi-val green">263M</div><div class="chart-kpi-lbl">Tokens (30d)</div></div>
+      <div class="chart-kpi"><div class="chart-kpi-val cyan">~8.8M</div><div class="chart-kpi-lbl">Daily Avg</div></div>
+      <div class="chart-kpi"><div class="chart-kpi-val gold">+340%</div><div class="chart-kpi-lbl">Forecast (6mo)</div></div>
+    </div>
+
+    <div class="chart-container">
+      <!-- Mini charts row -->
+      <div class="chart-row">
+        <div class="chart-card">
+          <h3>Daily Token Volume</h3>
+          <canvas id="chartDailyTokens" class="chart-canvas"></canvas>
+        </div>
+        <div class="chart-card">
+          <h3>Hourly Usage Pattern</h3>
+          <canvas id="chartHourly" class="chart-canvas"></canvas>
+        </div>
+      </div>
+
+      <!-- Forecast chart - full width -->
+      <div class="chart-card forecast-full-width">
+        <h3>12-Month Token Usage Forecast</h3>
+        <canvas id="chartForecast" class="chart-canvas-wide"></canvas>
+      </div>
+    </div>
+
+    <p class="tagline" style="margin-top:6px;">With 4× more memory, demand isn't capped anymore.</p>
+  </div>
+</div>
+
+<!-- ═══════ 10: The Deal ═══════ -->
+<div class="slide" data-slide="9">
+  <div class="slide-content">
+    <span class="badge badge-green">\u2665 THE DEAL</span>
+    <h2>I Invest In This<br>You Get All Of&nbsp;This</h2>
+    <p class="section-desc">In exchange for the ~$4,500 investment, here's what you receive:</p>
+    <div class="deal-grid">
+      <div class="deal-card"><span class="emoji">\ud83e\udd16</span><h4>Your Own AI Assistant</h4><p>A personal intelligent assistant running on DGX Spark hardware, always available.</p></div>
+      <div class="deal-card"><span class="emoji">\ud83d\udd12</span><h4>Total Privacy</h4><p>Every task processed locally. Photos, docs, everything — zero data leaves our network.</p></div>
+      <div class="deal-card"><span class="emoji">\ud83d\udc8e</span><h4>Bragging Rights</h4><p>You get to tell coworkers you own a DGX Spark running 70B-parameter models at home.</p></div>
+      <div class="deal-card"><span class="emoji">\ud83d\udcdc</span><h4>IOU Token</h4><p>An IOU of equal or lesser value — redeemable anytime, for anything you want.</p></div>
+    </div>
+    <img src="charcuterie.jpg" alt="And there's food too" class="charcuterie-img" loading="lazy" style="margin-top:12px;" />
+  </div>
+</div>
+
+<!-- ═══════ 11: Final CTA ═══════ -->
+<div class="slide" data-slide="10">
+  <div class="slide-content">
+    <h2 style="font-size:clamp(20px,5.8vw,32px);margin-bottom:6px;">So… Can I Order It?</h2>
+    <div class="glow-line" style="margin:14px auto;"></div>
+    <ul class="bullet-list" style="margin-top:18px;">
+      <li>I order the DGX Spark OEM board (~$4,500 all-in)</li>
+      <li>We gain 4× memory &amp; server-grade AI compute</li>
+      <li>You get a personal AI assistant + bragging rights</li>
+      <li>All our data stays private, on the network</li>
+      <li>Plus an IOU token — equal or lesser value, anytime</li>
+    </ul>
+    <div style="margin-top:28px;">
+      <p class="subtitle" style="font-size:clamp(16px,4.5vw,22px);font-weight:600;">One machine. Two assistants.<br>Zero monthly fees. Huge ROI.</p>
+    </div>
+  </div>
+</div>
+
+</div><!-- /deck -->
+
+<!-- ── Chart Drawing Logic ── -->
+<script>
+const slides = document.querySelectorAll('.slide');
+const total = slides.length;
+let current = 0;
+let isTransitioning = false;
+const HIDDEN = new Set();
+
+function goTo(index) {
+  if (isTransitioning || index < 0 || index >= total || index === current) return;
+  isTransitioning = true;
+
+  const dir = index > current ? 1 : -1;
+  const oldSlide = slides[current];
+
+  oldSlide.classList.remove('active');
+  oldSlide.classList.add(dir > 0 ? 'exit-left' : '');
+  HIDDEN.add(current);
+
+  current = index;
+  slides[current].style.transform = dir > 0 ? 'translateX(60px)' : 'translateX(-60px)';
+  slides[current].style.opacity = '0';
+  HIDDEN.delete(current);
+
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      slides[current].classList.add('active');
+      slides[current].style.transform = '';
+      slides[current].style.opacity = '';
+    });
+  });
+
+  setTimeout(() => {
+    oldSlide.classList.remove('exit-left');
+    oldSlide.style.transform = dir > 0 ? 'translateX(-60px)' : 'translateX(60px)';
+    isTransitioning = false;
+  }, 550);
+
+  updateUI();
+}
+
+function updateUI() {
+  document.getElementById('progressBar').style.width = ((current + 1) / total * 100) + '%';
+  document.getElementById('slideCounter').textContent = (current + 1) + ' / ' + total;
+  document.getElementById('prevBtn').classList.toggle('disabled', current === 0);
+  document.getElementById('nextBtn').classList.toggle('disabled', current === total - 1);
+}
+
+document.getElementById('prevBtn').addEventListener('click', () => goTo(current - 1));
+document.getElementById('nextBtn').addEventListener('click', () => goTo(current + 1));
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); goTo(current + 1); }
+  if (e.key === 'ArrowLeft') { e.preventDefault(); goTo(current - 1); }
+});
+
+// ── Touch / swipe support ── }
+  if (e.key === 'ArrowLeft')  { e.preventDefault(); goTo(current - 1); }
+});
+
+// Swipe support
+let touchStartX = 0, touchStartY = 0;
+document.addEventListener('touchstart', e => { touchStartX = e.touches[0].clientX; touchStartY = e.touches[0].clientY; }, {passive:true});
+document.addEventListener('touchend', e => {
+  const dx = e.changedTouches[0].clientX - touchStartX;
+  const dy = e.changedTouches[0].clientY - touchStartY;
+  if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 40) {
+    if (dx < 0) goTo(current + 1); else goTo(current - 1);
+  }
+}, {passive:true});
+
+updateUI();
+</script>
+
+</body>
+</html>
