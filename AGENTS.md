@@ -2,8 +2,24 @@
 
 ## Stack Overview
 
-This repo runs a local AI coding assistant on a Windows machine with an RTX 5090. Everything runs locally — no Docker, no cloud, no remote servers.
+**PRIMARY: NVIDIA DGX Spark (GB10 Superchip)** — deployed at `192.168.86.39`
+**BACKUP: Local RTX 5090** — Windows machine, still running for failover (do not tear down)
 
+### DGX Spark Stack (Primary)
+```
+  VS Code Copilot Chat
+        │  http://192.168.86.39:8001
+        ▼
+  FastAPI Proxy  (Docker container: gcopilot-proxy)
+        │  http://localhost:11434  (inside container, host network)
+        ▼
+  Ollama  (systemd service, Ubuntu 24.04 aarch64)
+        │  CUDA0
+        ▼
+  NVIDIA GB10  (122 GB unified memory, Blackwell native FP4 support)
+```
+
+### Local RTX 5090 Stack (Backup — DO NOT TEAR DOWN)
 ```
   VS Code Copilot Chat
         │  http://localhost:8001
@@ -19,7 +35,57 @@ This repo runs a local AI coding assistant on a Windows machine with an RTX 5090
 
 ---
 
-## Starting the Stack (Every Session)
+## DGX Spark Details
+
+| Setting | Value |
+|---|---|
+| Hostname | `dgxspark` (add to SSH config) |
+| IP | `192.168.86.39` |
+| Username | `darkmatter2222` |
+| GPU | NVIDIA GB10 Grace Blackwell superchip |
+| GPU Memory | 122 GB unified LPDDR5x |
+| OS | Ubuntu 24.04 LTS (aarch64/ARM) |
+| CPU | ARM aarch64, 20 threads |
+| Ollama | v0.30.10 at `/usr/local/bin/ollama` (ARM native binary) |
+| Model | `qwen3.6:27b-mtp-q4_K_M` (~17 GB Q4 quantized) |
+| Alias | `qwen3` with num_ctx=131000 via Modelfile |
+| Proxy | Docker container `gcopilot-proxy` (port 8001, host network) |
+| MongoDB | Connected to `192.168.86.48:27017` (persistent analytics) |
+
+### DGX Spark Performance Benchmarks
+```
+Prompt processing : 219 TPS  (22 tokens / 100ms)
+Token generation  : 40 TPS   (20 tokens / 502ms)
+GPU               : CUDA0 all 66/66 layers offloaded
+Blackwell FP4     : BLACKWELL_NATIVE_FP4 = 1 (native support enabled)
+```
+
+### SSH Config
+```# ~/.ssh/config
+Host dgxspark
+    HostName 192.168.86.39
+    User darkmatter2222
+    IdentityFile ~/.ssh/id_ed25519
+    ServerAliveInterval 60
+```
+
+---
+
+## Starting the Stack (DGX Spark — Primary)
+
+The DGX Spark runs as a systemd service + Docker container. No manual start needed — it's always on.
+
+**Verify everything is running:**
+```powershell
+# Health check
+Invoke-RestMethod http://192.168.86.39:8001/health
+# Expected: status=ok, ollama=True
+
+# Dashboard (MongoDB connected)
+Start-Process http://192.168.86.39:8001/dashboard
+```
+
+### Starting the Stack (Local RTX 5090 — Backup)
 
 **Step 1 — Ollama must be running**
 ```powershell
@@ -70,12 +136,12 @@ The proxy now stores every request to MongoDB for historical analytics.
 
 | Setting | Value |
 |---|---|
-| Connection | `host.docker.internal:27017` (Docker MongoDB) |
+| Connection | `192.168.86.48:27017` (persistent Docker MongoDB, both DGX Spark and local) |
 | Database | `radiacode` |
 | Collection | `requests` |
 | Auth | `ryan` / configured in `.env` |
 
-**Fields stored per request:** `request_id`, `model`, `prompt_tokens`, `completion_tokens`, `total_tokens`, `duration_secs`, `ttft_secs`, `tps`, `has_error`, `timestamp`
+**Fields stored per request:** `request_id`, `model`, `prompt_tokens`, `completion_tokens`
 
 Dashboard API endpoints (all MongoDB-backed):
 - `GET /api/history?days=30&limit=200` — raw request log
@@ -136,14 +202,25 @@ Installs Python deps into `.venv`, pulls the model (~18 GB), and creates the `qw
 
 ## Repository Commands
 
+### DGX Spark (Primary)
 ```
-First-time setup    : .\scripts\setup-local.ps1
-Every session (all) : .\scripts\go.ps1          ← one command does everything
-Start proxy only    : .\scripts\start-proxy-local.ps1
-Smoke test          : python scripts\test-proxy.py
-Warm up VRAM        : python scripts\warmup.py
-Build               : NOT APPLICABLE
-Unit tests          : NOT APPLICABLE (smoke tests only)
+Deploy everything     : python scripts/final-deploy.py           ← needs $env:DGXSPARK_SUDO_PASS
+Fix MongoDB only      : python scripts/fix_mongo_only.py         ← interactive password prompt
+SSH to device         : ssh dgxspark
+Dashboard             : http://192.168.86.39:8001/dashboard
+Health check          : curl http://192.168.86.39:8001/health
+Benchmark             : ssh dgxspark 'python3 ~/cbench.py'
+```
+
+### Local RTX 5090 (Backup)
+```powershell
+First-time setup     : .\scripts\setup-local.ps1
+Every session (all)  : .\scripts\go.ps1          ← one command does everything
+Start proxy only     : .\scripts\start-proxy-local.ps1
+Smoke test           : python scripts\test-proxy.py
+Warm up VRAM         : python scripts\warmup.py
+Build                : NOT APPLICABLE
+Unit tests           : NOT APPLICABLE (smoke tests only)
 ```
 
 ---
@@ -174,12 +251,23 @@ Unit tests          : NOT APPLICABLE (smoke tests only)
 | File | Purpose |
 |---|---|
 | `proxy/main.py` | FastAPI proxy — temp clamping, model name rewrite, streaming, token tracking, error handling |
-| `proxy/tracker.py` | Thread-safe real-time token throughput tracker (in-memory, no DB) — input/output tokens, timing, event log, chart data |
-| `proxy/dashboard.html` | Full command-center dashboard — live charts, session stats, request history, event log |
-| `scripts/setup-local.ps1` | One-time setup: .venv creation, model pull, qwen3 alias |
-| `scripts/start-proxy-local.ps1` | Start the proxy — run every session |
-| `scripts/test-proxy.py` | Smoke test: /health + /v1/chat/completions |
-| `scripts/warmup.py` | Pre-loads model into VRAM so first request isn't slow |
+| `proxy/tracker.py` | Thread-safe real-time token throughput tracker (in-memory, no DB) |
+| `proxy/db.py` | MongoDB persistence layer (async via motor) |
+| `proxy/cost_engine.py` | Cost calculation engine for analytics |
+| `proxy/dashboard.html` | Full command-center dashboard — live charts, session stats, request history |
+| `proxy/Dockerfile` | Docker image definition for DGX Spark deployment |
+| `scripts/setup-local.ps1` | Local RTX 5090 one-time setup: .venv creation, model pull, qwen3 alias |
+| `scripts/start-proxy-local.ps1` | Start local proxy — run every session |
+| `scripts/final-deploy.py` | Deploy everything to DGX Spark (SFTP upload + Docker build/run) |
+| `scripts/fix_mongo_only.py` | Reload DGX Spark container with MongoDB env vars |
+
+---
+
+## Security
+
+- **No credentials in repo** — `.env` is gitignored, no hardcoded IPs or keys committed
+- **Deployment scripts** (`final-deploy.py`, `dgxspark_reload.py`) are gitignored
+- **Sudo password** must be set via env var (`$env:DGXSPARK_SUDO_PASS`) at runtime — never stored
 
 ---
 

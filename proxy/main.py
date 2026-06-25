@@ -18,6 +18,8 @@ import json
 import time
 import uuid
 import logging
+import subprocess
+import asyncio
 from contextlib import asynccontextmanager
 
 # ── Load .env before anything else ───────────────────────────────────────

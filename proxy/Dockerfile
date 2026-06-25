@@ -8,6 +8,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy all proxy source files (main.py, tracker.py, etc.)
 COPY *.py ./
 
+# Copy dashboard template
+COPY dashboard.html ./
+
 ENV OLLAMA_BASE_URL=http://ollama:11434
 ENV SERVED_MODEL_NAME=qwen3
 ENV MIN_TEMPERATURE=0.6
