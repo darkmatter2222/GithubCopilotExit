@@ -554,6 +554,9 @@ async def stats_json():
         "medium": round(tier_costs["medium"], 4),
         "low": round(tier_costs["low"], 4),
     }
+    # Inject system resource stats (cached, refreshed every 5s)
+    sys_stats = await get_system_stats()
+    data["sys"] = sys_stats
     return data
 
 
