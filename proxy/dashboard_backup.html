@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8"/>
@@ -99,7 +99,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
 
 <!-- NAV -->
 <nav>
-  <div class="nav-brand"><span class="pulse"></span>LLM Proxy<span style="font-weight:400;color:var(--subtext);font-size:.82rem">localhost:8001</span><span style="font-weight:400;color:var(--subtext);font-size:.7rem;margin-left:10px;">v3.2.1</span></div>
+  <div class="nav-brand"><span class="pulse"></span>LLM Proxy<span style="font-weight:400;color:var(--subtext);font-size:.82rem">localhost:8001</span></div>
   <div class="nav-tabs">
     <button class="nav-tab active" onclick="showPage('live',this)">Live</button>
     <button class="nav-tab" onclick="showPage('history',this)">History</button>
@@ -110,7 +110,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
   <div class="nav-right"><span id="db-status" class="db-badge db-off">DB: checking…</span><span id="clock"></span></div>
 </nav>
 
-<!-- ------------ PAGE: LIVE ------------ -->
+<!-- ════════════ PAGE: LIVE ════════════ -->
 <div class="page active" id="page-live">
 
   <!-- Slim KPI Row -->
@@ -182,7 +182,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
       <div class="panel-title">Recent Requests</div>
       <div class="tbl-wrap">
         <table>
-          <thead><tr><th>ID</th><th>In</th><th>Out</th><th>Thinking</th><th>Total</th><th>TPS</th><th>Dur</th><th>TTFT (ms)</th></tr></thead>
+          <thead><tr><th>ID</th><th>In</th><th>Out</th><th>Thinking</th><th>Total</th><th>TPS</th><th>Dur</th><th>TTFT</th></tr></thead>
           <tbody id="tbl-recent"><tr><td colspan="8" style="text-align:center;color:var(--subtext);padding:18px">No completed requests yet</td></tr></tbody>
         </table>
       </div>
@@ -190,7 +190,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
   </div>
 </div>
 
-<!-- ------------ PAGE: HISTORY ------------ -->
+<!-- ════════════ PAGE: HISTORY ════════════ -->
 <div class="page" id="page-history">
   <div class="section-hdr" style="margin-top:14px"><h2>Request History</h2><div class="pill-group" id="hist-range"><button class="pill" onclick="setHistDays(1,this)">24h</button><button class="pill active" onclick="setHistDays(7,this)">7d</button><button class="pill" onclick="setHistDays(30,this)">30d</button><button class="pill" onclick="setHistDays(90,this)">90d</button></div></div>
   <div class="kpi-grid">
@@ -208,7 +208,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
   </div>
 </div>
 
-<!-- ------------ PAGE: USAGE ------------ -->
+<!-- ════════════ PAGE: USAGE ════════════ -->
 <div class="page" id="page-usage">
   <div class="section-hdr" style="margin-top:14px"><h2>Token Usage Over Time</h2><div class="pill-group"><button class="pill" onclick="setUsageDays(7,this)">7d</button><button class="pill active" onclick="setUsageDays(30,this)">30d</button><button class="pill" onclick="setUsageDays(90,this)">90d</button></div></div>
   <div id="usage-no-db" style="display:none;text-align:center;padding:40px;color:var(--subtext)">MongoDB not connected.</div>
@@ -221,7 +221,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
   </div>
 </div>
 
-<!-- ------------ PAGE: COST ------------ -->
+<!-- ════════════ PAGE: COST ════════════ -->
 <div class="page" id="page-cost">
   <div class="section-hdr" style="margin-top:14px"><h2>Cost Analysis</h2><div class="pill-group" id="cost-range"><button class="pill" onclick="setCostDays(1,this)">24h</button><button class="pill" onclick="setCostDays(7,this)">7d</button><button class="pill active" onclick="setCostDays(30,this)">30d</button><button class="pill" onclick="setCostDays(90,this)">90d</button></div></div>
   <div class="kpi-grid">
@@ -240,7 +240,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
   <div id="cost-no-db" style="display:none;text-align:center;padding:40px;color:var(--subtext)">MongoDB not connected.</div>
 </div>
 
-<!-- ------------ PAGE: LOG ------------ -->
+<!-- ════════════ PAGE: LOG ════════════ -->
 <div class="page" id="page-log">
   <div class="section-hdr" style="margin-top:14px"><h2>Event Log</h2><div class="pill-group"><button class="pill active" onclick="setLogFilter('ALL',this)">All</button><button class="pill" onclick="setLogFilter('INFO',this)">Info</button><button class="pill" onclick="setLogFilter('WARN',this)">Warn</button><button class="pill" onclick="setLogFilter('ERROR',this)">Errors</button></div></div>
   <div class="panel"><div class="log-wrap" id="ev-log"></div></div>
@@ -266,100 +266,12 @@ const charts={};
 const CHART_DEFAULTS={color:'rgba(205,214,244,.8)',responsive:true,maintainAspectRatio:false,animation:{duration:300},plugins:{legend:{display:false},tooltip:{mode:'index',intersect:false}},scales:{x:{grid:{color:'rgba(29,37,64,.8)'},ticks:{color:'#7c8ab5',maxRotation:0,font:{size:10}}},y:{grid:{color:'rgba(29,37,64,.8)'},ticks:{color:'#7c8ab5',font:{size:10}}}}};
 function mkChart(id,cfg){if(charts[id])charts[id].destroy();const ctx=$(id).getContext('2d');charts[id]=new Chart(ctx,cfg);return charts[id]}
 
-// -- TPS Chart -------------------------------------
+// ── TPS Chart ─────────────────────────────────────
 let tpsChart=null;
-let gpuUtilChart = null;
-let gpuMemChart = null;
-
 function initTpsChart(){tpsChart=mkChart('chartTps',{type:'line',data:{labels:[],datasets:[{label:'TPS',data:[],fill:true,borderColor:'#89b4fa',borderWidth:2,backgroundColor:'rgba(137,180,250,.12)',tension:.35,pointRadius:0,pointHoverRadius:4}]},options:{...CHART_DEFAULTS,scales:{x:{...CHART_DEFAULTS.scales.x,display:false},y:{...CHART_DEFAULTS.scales.y,beginAtZero:true,title:{display:true,text:'tok/s',color:'#7c8ab5',font:{size:10}}}}}})}
-
-function initGPUCharts(gpus) {
-  if (!gpus || !gpus.length) return;
-  
-  // Initialize GPU Utilization chart
-  gpuUtilChart = mkChart('chartGPUUtil', {
-    type: 'bar',
-    data: {
-      labels: gpus.map(g => g.name.length > 8 ? g.name.slice(0, 7) + '…' : g.name),
-      datasets: [{
-        label: 'GPU Util %',
-        data: gpus.map(g => g.util_percent),
-        backgroundColor: 'rgba(137,180,250,.7)',
-        borderColor: 'rgba(137,180,250,1)',
-        borderWidth: 1
-      }]
-    },
-    options: {
-      ...CHART_DEFAULTS,
-      scales: {
-        y: {
-          ...CHART_DEFAULTS.scales.y,
-          beginAtZero: true,
-          max: 100,
-          title: {
-            display: true,
-            text: '% Utilization',
-            color: '#7c8ab5',
-            font: { size: 10 }
-          }
-        }
-      }
-    }
-  });
-
-  // Initialize GPU Memory chart
-  gpuMemChart = mkChart('chartGPUMem', {
-    type: 'bar',
-    data: {
-      labels: gpus.map(g => g.name.length > 8 ? g.name.slice(0, 7) + '…' : g.name),
-      datasets: [{
-        label: 'Memory Usage %',
-        data: gpus.map(g => g.mem_total_mb ? Math.round(g.mem_used_mb / g.mem_total_mb * 100) : 0),
-        backgroundColor: 'rgba(166,227,161,.7)',
-        borderColor: 'rgba(166,227,161,1)',
-        borderWidth: 1
-      }]
-    },
-    options: {
-      ...CHART_DEFAULTS,
-      scales: {
-        y: {
-          ...CHART_DEFAULTS.scales.y,
-          beginAtZero: true,
-          max: 100,
-          title: {
-            display: true,
-            text: '% Memory',
-            color: '#7c8ab5',
-            font: { size: 10 }
-          }
-        }
-      }
-    }
-  });
-}
-
-function updateGPUCharts(gpus) {
-  if (!gpus || !gpus.length) return;
-  
-  // Update GPU Utilization chart
-  if (gpuUtilChart) {
-    gpuUtilChart.data.labels = gpus.map(g => g.name.length > 8 ? g.name.slice(0, 7) + '…' : g.name);
-      gpuUtilChart.data.datasets[0].data = gpus.map(g => g.util_percent || 0);
-    gpuUtilChart.update();
-  }
-  
-  // Update GPU Memory chart
-  if (gpuMemChart) {
-    gpuMemChart.data.labels = gpus.map(g => g.name.length > 8 ? g.name.slice(0, 7) + '…' : g.name);
-    gpuMemChart.data.datasets[0].data = gpus.map(g => g.mem_total_mb ? Math.round(g.mem_used_mb / g.mem_total_mb * 100) : 0);
-    gpuMemChart.update();
-  }
-}
-
 function updateTpsChart(history){if(!tpsChart)initTpsChart();const labels=history.map((_,i)=>i===0||i===history.length-1?new Date(_.ts*1000).toLocaleTimeString():'');const data=history.map(h=>h.value);tpsChart.data.labels=labels;tpsChart.data.datasets[0].data=data;tpsChart.update('none')}
 
-// -- System Resource Bars -------------------------
+// ── System Resource Bars ─────────────────────────
 function updateSystemBars(sys){if(!sys)return}
 function setBar(id,pct_){const bar=$(id+'-bar');const val=$(id+'-val');if(bar)bar.style.width=Math.min(pct_,100)+'%'}
 
@@ -393,7 +305,7 @@ function updateResourceBars(sys){
   if($('val-ram'))$('val-ram').textContent=sys.ram_total_gb?(sys.ram_used_gb+' / '+sys.ram_total_gb+' GB'):'—';
   // Disk
   if($('bar-disk'))$('bar-disk').style.width=(sys.disk_percent||0)+'%';
-  if($('val-disk'))$('val-disk').textContent=sys.disk_total_gb?(sys.disk_used_gb+' / '+sys.disk_total_gb+' GB'):'—';
+  if($('val-disk'))$('val-disk').textContent=sys.disk_total_gb?(sys.disk_used_gb+' / '+sys.disk_total_gb.replace(/(\d+)/, m => parseInt(m)<1000?m:(parseInt(m)/1024).toFixed(1)+' TB')):'—';
   // GPUs
   if(sys.gpus)renderGPUBars(sys.gpus);
   // Models
@@ -411,16 +323,16 @@ function updateModelsList(models){
   }).join('');
 }
 
-// -- Event Log ------------------------------------
+// ── Event Log ────────────────────────────────────
 let logFilter='ALL';
 function setLogFilter(f,btn){logFilter=f;document.querySelectorAll('#page-log .pill').forEach(b=>b.classList.remove('active'));btn.classList.add('active');renderLog()}
 let lastEvents=[];
 function renderLog(){const filtered=logFilter==='ALL'?lastEvents:lastEvents.filter(e=>e.level===logFilter);const el=$('ev-log');if(!filtered.length){el.innerHTML='<div style="text-align:center;color:var(--subtext);padding:20px">No events</div>';return}el.innerHTML=filtered.map(e=>{const cls=e.level==='ERROR'?'lvl-ERROR':e.level==='WARN'?'lvl-WARN':'lvl-INFO';return`<div class="log-row"><span class="log-time">${e.time||'?'}</span><span class="log-lvl ${cls}">[${e.level||'?'}]</span><span class="log-msg">${e.message||''}</span></div>`}).join('')}
 
-// -- DB Status ------------------------------------
+// ── DB Status ────────────────────────────────────
 async function checkDbStatus(){try{const r=await fetch('/api/stats/summary?days=1');if(r.ok){$('db-status').textContent='DB: Connected';$('db-status').className='db-badge db-on'}else{$('db-status').textContent='DB: Offline';$('db-status').className='db-badge db-off'}}catch{$('db-status').textContent='DB: Error';$('db-status').className='db-badge db-off'}}
 
-// -- Live Refresh ---------------------------------
+// ── Live Refresh ─────────────────────────────────
 async function refreshLive(){
   try{
     const d=await fetch('/stats').then(r=>r.json());
@@ -441,35 +353,15 @@ async function refreshLive(){
     // TPS chart
     if(d.tps_history?.length)updateTpsChart(d.tps_history);
 
-    // GPU Charts
-    if(d.sys?.gpus) {
-      if(!gpuUtilChart) {
-        initGPUCharts(d.sys.gpus);
-      } else {
-        updateGPUCharts(d.sys.gpus);
-      }
-    }
-
-    // TTFT Chart
-    if(d.history?.length) {
-      // Extract TTFT data from history (only completed requests)
-      const ttftData = d.history.filter(r => r.ttft && r.ttft > 0).slice(0, 30);
-      if(!ttftChart) {
-        initTTFTChart();
-      } else {
-        updateTTFTChart(ttftData);
-      }
-    }
-
     // Active table
     const at=$('tbl-active');
     if(!d.active_requests_detail?.length){at.innerHTML='<tr><td colspan="7" style="text-align:center;color:var(--subtext);padding:18px">Idle — no active requests</td></tr>'}
-    else{at.innerHTML=d.active_requests_detail.map(r=>`<tr><td>${r.id}</td><td style="color:var(--subtext)">${r.model||'—'}</td><td>${nf(r.output_tokens)}</td><td style="color:var(--mauve)">${nf(r.thinking_tokens)}</td><td style="color:var(--blue)">${(r.tps||0).toFixed(1)}</td><td>${r.elapsed}s</td><td><span class="badge b-live">? LIVE</span></td></tr>`).join('')}
+    else{at.innerHTML=d.active_requests_detail.map(r=>`<tr><td>${r.id}</td><td style="color:var(--subtext)">${r.model||'—'}</td><td>${nf(r.output_tokens)}</td><td style="color:var(--mauve)">${nf(r.thinking_tokens)}</td><td style="color:var(--blue)">${(r.tps||0).toFixed(1)}</td><td>${r.elapsed}s</td><td><span class="badge b-live">● LIVE</span></td></tr>`).join('')}
 
     // Recent table
     const rt=$('tbl-recent');
     if(!d.history?.length){rt.innerHTML='<tr><td colspan="8" style="text-align:center;color:var(--subtext);padding:18px">No completed requests yet</td></tr>'}
-    else{rt.innerHTML=d.history.slice(0,25).map(r=>`<tr><td style="color:var(--subtext);font-size:.73rem">${r.id}</td><td>${nf(r.prompt_tokens)}</td><td>${nf(r.output_tokens)}</td><td style="color:var(--mauve)">${nf(r.thinking_tokens)}</td><td style="color:var(--mauve)">${nf(r.total_tokens)}</td><td style="color:var(--blue)">${(r.tps||0).toFixed(1)}</td><td>${r.duration?.toFixed(1)||'?'}s</td><td style="color:var(--subtext)">${r.ttft?.toFixed(1)||'?'}ms</td></tr>`).join('')}
+    else{rt.innerHTML=d.history.slice(0,25).map(r=>`<tr><td style="color:var(--subtext);font-size:.73rem">${r.id}</td><td>${nf(r.prompt_tokens)}</td><td>${nf(r.output_tokens)}</td><td style="color:var(--mauve)">${nf(r.thinking_tokens)}</td><td style="color:var(--mauve)">${nf(r.total_tokens)}</td><td style="color:var(--blue)">${(r.tps||0).toFixed(1)}</td><td>${r.duration?.toFixed(1)||'?'}s</td><td style="color:var(--subtext)">${r.ttft?.toFixed(2)||'?'}s</td></tr>`).join('')}
 
     // Events
     lastEvents=d.events||[];
@@ -477,12 +369,12 @@ async function refreshLive(){
   }catch(e){console.warn('live refresh error',e)}
 }
 
-// -- Periodic Refresh (every 1.5s) ---------------
+// ── Periodic Refresh (every 1.5s) ───────────────
 initTpsChart();checkDbStatus();refreshLive();
 setInterval(refreshLive, 1500);
 setInterval(checkDbStatus, 30000);
 
-// -- HISTORY PAGE ---------------------------------
+// ── HISTORY PAGE ─────────────────────────────────
 let histDays=7;
 function setHistDays(d,btn){histDays=d;document.querySelectorAll('#hist-range .pill').forEach(b=>b.classList.remove('active'));btn.classList.add('active');loadHistory()}
 async function loadHistory(){
@@ -497,12 +389,12 @@ async function loadHistory(){
     }else{$('hist-no-db').style.display='';$('hist-tbl-wrap').style.display='none';return}
     const res=await fetch(`/api/history?days=${histDays}&limit=200`).then(r=>r.json());
     const rows=res.data||[];const tbody=$('tbl-history');
-    if(!rows.length){tbody.innerHTML='<tr><td colspan="8" style="text-align:center;color:var(--subtext);padding:20px">No data</td></tr>';return}
+    if(!rows.length){tbody.innerHTML='<tr><td colspan="9" style="text-align:center;color:var(--subtext);padding:20px">No data</td></tr>';return}
     tbody.innerHTML=rows.map(r=>{const ts=r.timestamp?.$date||r.timestamp||'';const errBadge=r.has_error?`<span class="badge b-err">Error</span>`:`<span class="badge b-done">OK</span>`;return`<tr><td style="font-size:.73rem;color:var(--subtext)">${fmtTs(ts)}</td><td style="font-size:.73rem;color:var(--subtext)">${r.request_id||'—'}</td><td>${nf(r.prompt_tokens)}</td><td>${nf(r.completion_tokens)}</td><td style="color:var(--mauve)">${nf(r.thinking_tokens)}</td><td style="color:var(--mauve)">${nf(r.total_tokens)}</td><td style="color:var(--blue)">${(r.tps||0).toFixed(1)}</td><td>${r.duration_secs?.toFixed(1)||'?'}s</td><td>${errBadge}</td></tr>`}).join('');
   }catch(e){console.warn('history error',e)}
 }
 
-// -- USAGE PAGE -----------------------------------
+// ── USAGE PAGE ───────────────────────────────────
 let usageDays=30;
 function setUsageDays(d,btn){usageDays=d;document.querySelectorAll('#page-usage .pill').forEach(b=>b.classList.remove('active'));btn.classList.add('active');loadUsage()}
 async function loadUsage(){
@@ -519,7 +411,7 @@ async function loadUsage(){
   }catch(e){console.warn('usage error',e)}
 }
 
-// -- COST PAGE ------------------------------------
+// ── COST PAGE ────────────────────────────────────
 let costDays=30;function setCostDays(d,btn){costDays=d;document.querySelectorAll('#cost-range .pill').forEach(b=>b.classList.remove('active'));btn.classList.add('active');loadCostPage()}
 const DOLLAR_FMT=(n)=>{if(n==null)return'—';const a=Math.abs(n);if(a>=1)return'$'+n.toFixed(2);return'$'+n.toFixed(4)};
 
@@ -549,4 +441,3 @@ setInterval(()=>{$('page-cost')?.classList.contains('active')&&loadCostPage()},1
 </script>
 </body>
 </html>
-

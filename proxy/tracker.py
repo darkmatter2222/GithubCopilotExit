@@ -7,7 +7,10 @@ Persists completed requests to MongoDB for historical analysis.
 import asyncio
 import threading
 import time
+import logging
 from dataclasses import dataclass, field
+
+log = logging.getLogger("tracker")
 
 # ── DB handle (set by main.py at startup) ──
 db_backend = None
@@ -33,6 +36,7 @@ class RequestStats:
     first_token_time: float = 0.0   # wall-clock of first output token
     last_token_time: float = 0.0    # wall-clock of last output token
     finished: bool = False
+    ttft_ms: float = 0.0            # Time to first token in milliseconds
 
     @property
     def avg_completion_tps(self) -> float:
@@ -112,6 +116,8 @@ class TokenTracker:
             s.last_token_time = now
             if s.first_token_time == 0.0:
                 s.first_token_time = now
+                # Calculate TTFT when first token arrives
+                s.ttft_ms = (s.first_token_time - s.start_time) * 1000  # Convert to milliseconds
 
     def update_from_response(self, request_id: str, response: dict) -> None:
         """Merge usage block from Ollama final chunk / non-streamed reply."""
@@ -178,8 +184,8 @@ class TokenTracker:
                 }
                 try:
                     asyncio.create_task(db_backend.save_request(record))
-                except Exception:
-                    pass
+                except Exception as e:
+                    log.warning(f"Failed to save error request to DB: {e}")
 
     def finish_request(self, request_id: str) -> None:
         with self._lock:
@@ -233,8 +239,8 @@ class TokenTracker:
                 }
                 try:
                     asyncio.create_task(db_backend.save_request(record))
-                except Exception:
-                    pass  # Don't let DB failures break the tracker
+                except Exception as e:
+                    log.warning(f"Failed to save request to DB: {e}")
 
     # ── chart helper (no external lock needed, called from get_active_summary) ──
     def _snapshot_tps(self) -> None:
@@ -279,6 +285,7 @@ class TokenTracker:
                     "thinking_tokens": s.thinking_tokens,
                     "tps": round(s.tps_since_first_token, 1),
                     "elapsed": round(elapsed, 1),
+                    "ttft": round(s.ttft_ms, 1),
                 })
 
             return {

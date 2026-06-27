@@ -267,7 +267,7 @@ Unit tests           : NOT APPLICABLE (smoke tests only)
 
 - **No credentials in repo** — `.env` is gitignored, no hardcoded IPs or keys committed
 - **Deployment scripts** (`final-deploy.py`, `dgxspark_reload.py`) are gitignored
-- **Sudo password** must be set via env var (`$env:DGXSPARK_SUDO_PASS`) at runtime — never stored
+- **Docker sudo is NOPASSWD** — user `darkmatter2222` can run `sudo docker *` without a password (configured via `/etc/sudoers.d/docker-nopasswd`)
 
 ---
 

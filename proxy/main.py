@@ -50,18 +50,25 @@ MIN_TEMPERATURE = float(os.environ.get("MIN_TEMPERATURE", "0.6"))
 MODEL_REGISTRY = {
     "qwen3": {"ollama_name": "qwen3", "display_name": "Qwen3.6-27B", "default": True},
     "qwen3-coder": {"ollama_name": "qwen3-coder", "display_name": "Qwen3-Coder-Next-27B", "default": False},
+    "obliterated": {"ollama_name": "obliterated", "display_name": "Qwen3.6-27B-OBLITERATED", "default": False},
 }
 # Allow overriding via env var (comma-separated: alias=ollama_name)
+# When set, the override REPLACES the entire registry.
 default_model_env = os.environ.get("MODEL_REGISTRY_OVERRIDE", "")
 if default_model_env:
+    MODEL_REGISTRY.clear()
+    first = True
     for pair in default_model_env.split(","):
-        if "=" in pair:
-            alias, ollama_name = pair.split("=", 1)
+        # Support both alias:ollama_name and alias=ollama_name formats
+        sep = ":" if ":" in pair else ("=" if "=" in pair else None)
+        if sep:
+            alias, ollama_name = pair.split(sep, 1)
             MODEL_REGISTRY[alias.strip()] = {
                 "ollama_name": ollama_name.strip(),
                 "display_name": ollama_name.strip(),
-                "default": False,
+                "default": first,
             }
+            first = False
 
 # Get default model alias
 default_model_alias = next(
@@ -129,32 +136,33 @@ async def get_system_stats() -> dict:
     except Exception as e:
         log.warning(f"psutil stats failed: {e}")
 
-    # ── vLLM running models ──────────────────────────────────
+    # ── Ollama running models (DGX Spark primary data source) ──
     try:
+        ollama_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
         async with httpx.AsyncClient(timeout=5) as client:
-            r = await client.get(f"{VLLM_BASE}/v1/models")
+            r = await client.get(f"{ollama_url}/api/tags")
             if r.status_code == 200:
-                models_data = r.json().get("data", [])
+                models_data = r.json().get("models", [])
                 result["models"] = [
                     {
-                        "name": m.get("id", "?"),
-                        "full_name": m.get("id", "?"),
-                        "size_mb": 0,
-                        "digest": "",
+                        "name": m.get("name", "?"),
+                        "full_name": m.get("name", "?"),
+                        "size_mb": round(m.get("size", 0) / (1024 * 1024), 1),
+                        "digest": m.get("digest", ""),
                     }
                     for m in models_data
                 ]
             else:
                 result["models"] = []
     except Exception as e:
-        log.warning(f"vLLM models request failed: {e}")
+        log.warning(f"Ollama models request failed: {e}")
         result["models"] = []
 
     # ── nvidia-smi GPU stats (best effort, DGX Spark & RTX) ────
     try:
         proc = await asyncio.create_subprocess_exec(
             "nvidia-smi",
-            "--query-gpu=utilization.gpu,memory.used,memory.total,name,temperature.gpu",
+            "--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu",
             "--format=csv,noheader,nounits",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -162,23 +170,32 @@ async def get_system_stats() -> dict:
         stdout, _ = await proc.communicate()
         lines = stdout.decode().strip().split("\n")
         gpu_gpus = []
+
+        def _parse_gpu_metric(raw: str) -> int:
+            cleaned = raw.strip().strip("[]")
+            if not cleaned or cleaned.upper() == "N/A":
+                return 0
+            return int(float(cleaned))
+
         for line in lines:
             parts = [p.strip() for p in line.split(",")]
             if len(parts) >= 5:
                 try:
                     gpu_gpus.append({
-                        "name": parts[3],
-                        "util_percent": int(parts[0]),
-                        "mem_used_mb": int(parts[1]),
-                        "mem_total_mb": int(parts[2]),
-                        "temp_c": int(parts[4]),
+                        "name": parts[0],
+                        "util_percent": _parse_gpu_metric(parts[1]),
+                        "mem_used_mb": _parse_gpu_metric(parts[2]),
+                        "mem_total_mb": _parse_gpu_metric(parts[3]),
+                        "temp_c": _parse_gpu_metric(parts[4]),
                     })
-                except (ValueError, IndexError):
+                except (ValueError, IndexError) as e:
+                    log.warning(f"Failed to parse GPU data line '{line}': {e}")
                     pass
         result["gpus"] = gpu_gpus
-    except Exception:
+    except Exception as e:
         # nvidia-smi not available (local Windows fallback)
         result["gpus"] = []
+        log.warning(f"nvidia-smi failed: {e}")
 
     _last_sys_stats.clear()
     _last_sys_stats.update(result)
@@ -359,9 +376,112 @@ async def list_models():
     }
 
 
-# ── Dedicated coder endpoint MUST be registered BEFORE parent route ────
+# ── Dedicated child endpoints MUST be registered BEFORE parent route ────
 # FastAPI processes routes in declaration order. If the parent catches first,
-# it swallows /coder requests. Register child route here to avoid shadowing.
+# it swallows child requests. Register child routes here to avoid shadowing.
+
+@app.post("/v1/chat/completions/obliterated")
+async def obliterated_completions(request: Request):
+    """Dedicated endpoint for Qwen3.6-27B-OBLITERATED model.
+    Equivalent to posting to /v1/chat/completions with model='obliterated'."""
+    body = await request.json()
+    body["model"] = "obliterated"
+    body = prepare_body(body)
+    body.pop("_client_model", None)
+
+    stream = body.get("stream", False)
+    target_url = f"{VLLM_BASE}/v1/chat/completions"
+    client_model_alias = "obliterated"
+
+    headers = {"Content-Type": "application/json"}
+
+    if stream:
+        request_id = tracker.new_request_id()
+        tracker.start_request(request_id, client_model_alias)
+
+        async def generate():
+            token_count = 0
+            thinking_token_count = 0
+            tool_call_seen = False
+            fallback_injected = False
+            stream_had_done = False
+            saved_id = "fallback"
+            had_exception = False
+            try:
+                async with httpx.AsyncClient(timeout=None) as client:
+                    async with client.stream(
+                        "POST", target_url, json=body, headers=headers
+                    ) as resp:
+                        async for chunk in resp.aiter_bytes():
+                            for line in chunk.split(b"\n"):
+                                decoded = line.strip().decode("utf-8", errors="replace")
+                                if decoded.startswith("data: "):
+                                    data_part = decoded[len("data: "):]
+                                    if data_part == "[DONE]":
+                                        stream_had_done = True
+                                        continue
+                                    try:
+                                        payload = json.loads(data_part)
+                                        saved_id = payload.get("id", saved_id)
+                                        choices = payload.get("choices", [])
+                                        if choices:
+                                            delta = choices[0].get("delta", {})
+                                            content = delta.get("content", "") or delta.get("reasoning", "")
+                                            if content:
+                                                token_count += 1
+                                                tracker.record_token(request_id)
+                                            if delta.get("tool_calls"):
+                                                tool_call_seen = True
+                                        usage = payload.get("usage")
+                                        if usage:
+                                            tracker.update_from_response(request_id, payload)
+                                            thinking = usage.get("loading_tokens", 0) + usage.get("reasoning_tokens", 0)
+                                            if thinking > 0:
+                                                thinking_token_count = thinking
+                                    except (json.JSONDecodeError, KeyError):
+                                        pass
+                            chunk = remap_reasoning_to_content(chunk)
+                            if (token_count == 0 and not tool_call_seen
+                                    and b"data: [DONE]" in chunk and not fallback_injected):
+                                synth = (
+                                    f'data: {{"id":"{saved_id}","object":"chat.completion.chunk",'
+                                    f'"choices":[{{"index":0,"delta":{{"content":"[Model produced no output \u2014 please retry]"}},"finish_reason":null}}]}}\n\n'
+                                )
+                                yield synth.encode()
+                                fallback_injected = True
+                            yield chunk
+            except Exception as exc:
+                had_exception = True
+                log.error(f"[{request_id}] error: {exc}")
+                tracker.record_error(request_id, str(exc))
+                synth = (
+                    f'data: {{"id":"{saved_id}","object":"chat.completion.chunk",'
+                    f'"choices":[{{"index":0,"delta":{{"content":"[Stream interrupted \u2014 please retry]"}},"finish_reason":"stop"}}]}}\n\n'
+                    f'data: [DONE]\n\n'
+                )
+                yield synth.encode()
+                return
+            finally:
+                tracker.finish_request(request_id)
+
+        return StreamingResponse(generate(), media_type="text/event-stream")
+
+    async with httpx.AsyncClient(timeout=None) as client:
+        resp = await client.post(target_url, json=body, headers=headers)
+        request_id = tracker.new_request_id()
+        tracker.start_request(request_id, client_model_alias)
+        try:
+            resp_json = json.loads(resp.content) if resp.content else {}
+            tracker.update_from_response(request_id, resp_json)
+        except (json.JSONDecodeError, KeyError):
+            pass
+        tracker.finish_request(request_id)
+        return Response(
+            content=resp.content,
+            status_code=resp.status_code,
+            media_type="application/json",
+        )
+
 
 @app.post("/v1/chat/completions/coder")
 async def coder_completions(request: Request):
