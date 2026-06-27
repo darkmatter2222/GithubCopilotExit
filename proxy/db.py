@@ -66,8 +66,7 @@ class SessionDB:
         if not self.enabled:
             return []
         try:
-            from_datetime = datetime.now(timezone.utc).replace(microsecond=0)
-            cutoff = from_datetime.replace(day=from_datetime.day - days)
+            cutoff = datetime.now(timezone.utc) - timedelta(days=days)
             cursor = (
                 self.requests.find({"timestamp": {"$gte": cutoff}})
                 .sort("timestamp", sort_order)

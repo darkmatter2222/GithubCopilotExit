@@ -2,36 +2,26 @@
 
 ## Stack Overview
 
-**PRIMARY: NVIDIA DGX Spark (GB10 Superchip)** — deployed at `192.168.86.39`
-**BACKUP: Local RTX 5090** — Windows machine, still running for failover (do not tear down)
+**PRIMARY: NVIDIA DGX Spark (GB10 Superchip)** — `192.168.86.39`
+**BACKUP: Local RTX 5090** — Windows machine (do not tear down)
 
-### DGX Spark Stack (Primary)
+### Architecture
+
 ```
-  VS Code Copilot Chat
-        │  http://192.168.86.39:8001
-        ▼
-  FastAPI Proxy  (Docker container: gcopilot-proxy)
-        │  http://localhost:11434  (inside container, host network)
-        ▼
-  Ollama  (systemd service, Ubuntu 24.04 aarch64)
-        │  CUDA0
-        ▼
-  NVIDIA GB10  (122 GB unified memory, Blackwell native FP4 support)
+VS Code Copilot Chat (chatLanguageModels.json)
+        |  http://192.168.86.39:8001
+        v
+FastAPI Proxy  (Docker container: gcopilot-proxy, --network host)
+        |  http://localhost:11434  (Ollama, host network)
+        v
+Ollama  (systemd service, Ubuntu 24.04 aarch64)
+        |  CUDA0 — 66/66 layers offloaded
+        v
+NVIDIA GB10  (122 GB unified LPDDR5x memory)
 ```
 
-### Local RTX 5090 Stack (Backup — DO NOT TEAR DOWN)
-```
-  VS Code Copilot Chat
-        │  http://localhost:8001
-        ▼
-  FastAPI Proxy  (proxy/main.py)
-        │  http://localhost:11434
-        ▼
-  Ollama  (Windows install — ollama.com)
-        │  PCIe
-        ▼
-  RTX 5090  (~18 GB VRAM for Q4 weights, ~128K tokens usable from KV cache)
-```
+The proxy is **fully dynamic** — it discovers models from Ollama automatically every 30 seconds.
+No code changes are ever needed to add, remove, or swap models.
 
 ---
 
@@ -39,29 +29,16 @@
 
 | Setting | Value |
 |---|---|
-| Hostname | `dgxspark` (add to SSH config) |
-| IP | `192.168.86.39` |
+| IP / Hostname | `192.168.86.39` / `dgxspark` |
 | Username | `darkmatter2222` |
-| GPU | NVIDIA GB10 Grace Blackwell superchip |
-| GPU Memory | 122 GB unified LPDDR5x |
-| OS | Ubuntu 24.04 LTS (aarch64/ARM) |
-| CPU | ARM aarch64, 20 threads |
-| Ollama | v0.30.10 at `/usr/local/bin/ollama` (ARM native binary) |
-| Models | `qwen3.6:27b-mtp-q4_K_M` (~17 GB Q4) + `qwen3-coder:latest` (~18 GB Q4) |
-| Alias | `qwen3` with num_ctx=131000 via Modelfile |
+| GPU | NVIDIA GB10 Grace Blackwell — 122 GB unified memory |
+| OS | Ubuntu 24.04 LTS (aarch64) |
+| Ollama | systemd service at `/usr/local/bin/ollama` |
 | Proxy | Docker container `gcopilot-proxy` (port 8001, host network) |
-| MongoDB | Connected to `192.168.86.48:27017` (persistent analytics) |
-
-### DGX Spark Performance Benchmarks
-```
-Prompt processing : 219 TPS  (22 tokens / 100ms)
-Token generation  : 40 TPS   (20 tokens / 502ms)
-GPU               : CUDA0 all 66/66 layers offloaded
-Blackwell FP4     : BLACKWELL_NATIVE_FP4 = 1 (native support enabled)
-```
+| MongoDB | `192.168.86.48:27017` (persistent analytics) |
 
 ### SSH Config
-```# ~/.ssh/config
+```
 Host dgxspark
     HostName 192.168.86.39
     User darkmatter2222
@@ -69,221 +46,232 @@ Host dgxspark
     ServerAliveInterval 60
 ```
 
----
-
-## Starting the Stack (DGX Spark — Primary)
-
-The DGX Spark runs as a systemd service + Docker container. No manual start needed — it's always on.
-
-**Verify everything is running:**
-```powershell
-# Health check
-Invoke-RestMethod http://192.168.86.39:8001/health
-# Expected: status=ok, ollama=True
-
-# Dashboard (MongoDB connected)
-Start-Process http://192.168.86.39:8001/dashboard
+### Performance Benchmarks
 ```
-
-### Starting the Stack (Local RTX 5090 — Backup)
-
-**Step 1 — Ollama must be running**
-```powershell
-# Ollama auto-starts with Windows. If not:
-ollama serve
-# Verify: http://localhost:11434 should respond
+Prompt processing : ~219 TPS
+Token generation  : ~40 TPS
+GPU               : CUDA0, all 66/66 layers offloaded
+Blackwell FP4     : native support enabled (BLACKWELL_NATIVE_FP4=1)
 ```
-
-**Step 2 — Start the proxy**
-```powershell
-.\scripts\start-proxy-local.ps1
-```
-Keep this terminal open. The proxy logs every request.
-
-**Step 3 — Verify**
-```powershell
-Invoke-RestMethod http://localhost:8001/health
-# Expected: status=ok, ollama=True
-```
-
-Live dashboard: **http://localhost:8001/dashboard** — redesigned Analytics UI with:
-- **Live tab**: TPS sparkline, I/O bar chart, active request table, session history (Chart.js, auto-refresh 2s)
-- **History tab**: Full MongoDB request log with 24h/7d/30d/90d time range filters
-- **Usage tab**: Daily & hourly token usage charts (input vs output, request count)
-- **Event Log tab**: Filterable proxy event stream (ALL / INFO / WARN / ERROR)
 
 ---
 
-## ⚠️ Critical: Modifying the Proxy (Self-Deploy Protocol)
+## Key URLs
 
-**The VS Code Copilot chat session runs THROUGH this proxy.** Restarting the proxy will terminate the current AI session mid-response.
-
-**Rules to follow every time you modify and redeploy:**
-1. Make ALL code changes to every file BEFORE issuing any restart commands.
-2. Install any new Python dependencies BEFORE restarting.
-3. Issue the kill + restart as a **single chained PowerShell command** so the proxy comes back up automatically (no second turn needed):
-   ```powershell
-   Stop-Process -Id (Get-NetTCPConnection -LocalPort 8001 -ErrorAction SilentlyContinue).OwningProcess -Force -ErrorAction SilentlyContinue ; Start-Sleep -Milliseconds 500 ; .\scripts\start-proxy-local.ps1
-   ```
-4. **Expect your session to be terminated.** This is normal. The new proxy process will start and VS Code will reconnect automatically on the next message.
-5. Never restart the proxy as a mid-task step — only as the final action after all changes are complete and validated.
-
----
-
-## MongoDB Persistence
-
-The proxy now stores every request to MongoDB for historical analytics.
-
-| Setting | Value |
+| URL | Purpose |
 |---|---|
-| Connection | `192.168.86.48:27017` (persistent Docker MongoDB, both DGX Spark and local) |
-| Database | `radiacode` |
-| Collection | `requests` |
-| Auth | `ryan` / configured in `.env` |
-
-**Fields stored per request:** `request_id`, `model`, `prompt_tokens`, `completion_tokens`
-
-Dashboard API endpoints (all MongoDB-backed):
-- `GET /api/history?days=30&limit=200` — raw request log
-- `GET /api/usage/daily?days=30` — aggregated daily token usage
-- `GET /api/usage/hourly?days=7` — aggregated hourly token usage
-- `GET /api/stats/summary?days=30` — summary KPIs
-
-If MongoDB is unavailable, the proxy runs in memory-only mode (live data still works; History/Usage dashboard pages show "not connected").
+| `http://192.168.86.39:8001/health` | Health check — JSON |
+| `http://192.168.86.39:8001/dashboard` | Live analytics dashboard |
+| `http://192.168.86.39:8001/v1/models` | All available models (OpenAI format) |
+| `http://192.168.86.39:8001/stats` | Real-time token stats (JSON) |
+| `http://192.168.86.39:8001/api/models/running` | Models currently in VRAM |
+| `POST http://192.168.86.39:8001/api/router/refresh` | Force model re-discovery |
 
 ---
 
-## First-Time Setup (Once Per Machine)
+## Managing Models (Dynamic — No Code Changes Needed)
+
+### List all downloaded models
+```bash
+ssh dgxspark ollama list
+```
+
+### Download a new model (auto-available to proxy within 30s)
+```bash
+ssh dgxspark "ollama pull qwen3:30b"
+ssh dgxspark "ollama pull llama3.3:70b-instruct-q4_K_M"
+ssh dgxspark "ollama pull deepseek-r1:32b"
+```
+Once downloaded, the proxy discovers it at the next refresh (<=30s). No restart needed.
+Ollama loads it into VRAM automatically on the first completion request.
+
+### Remove a model
+```bash
+ssh dgxspark "ollama rm <model-name>"
+```
+
+### Check what is loaded in VRAM right now
+```bash
+ssh dgxspark ollama ps
+# Or via proxy API:
+curl http://192.168.86.39:8001/api/models/running
+```
+
+### Currently available models on DGX Spark
+```
+qwen3:latest                       17 GB  (default general-purpose)
+qwen3.6:27b-mtp-q4_K_M            17 GB  (MTP variant)
+qwen3-coder:latest                 18 GB  (coding specialist)
+obliterated:latest                 16 GB  (uncensored finetune)
+```
+
+### Switch the active model in VS Code Copilot
+1. Edit `chatLanguageModels.json` (`%APPDATA%\Code\User\chatLanguageModels.json`)
+2. Change the `"id"` field to any model name Ollama has downloaded
+3. The proxy routes to it automatically — Ollama loads into VRAM on first request
+
+### Force proxy to re-discover models immediately
+```bash
+curl -X POST http://192.168.86.39:8001/api/router/refresh
+```
+
+### Create a custom Ollama alias (larger context window, etc.)
+```bash
+ssh dgxspark
+cat > ~/Modelfile-custom << 'EOF'
+FROM qwen3:latest
+PARAMETER num_ctx 131072
+PARAMETER temperature 0.6
+EOF
+ollama create mymodel -f ~/Modelfile-custom
+# Proxy discovers "mymodel" within 30 seconds automatically
+```
+
+---
+
+## Deploying the Proxy
+
+### Full deploy (upload code + rebuild Docker image on DGX)
+```powershell
+# From repo root on Windows
+python scripts/deploy.py
+```
+
+### Quick restart (no code changes)
+```powershell
+ssh dgxspark "sudo docker restart gcopilot-proxy"
+```
+
+### View container logs
+```powershell
+ssh dgxspark "sudo docker logs gcopilot-proxy --tail 50 -f"
+```
+
+### Manual Docker run (reference)
+```bash
+sudo docker run -d --name gcopilot-proxy --network host \
+  --restart unless-stopped \
+  -e OLLAMA_BASE_URL=http://localhost:11434 \
+  -e MIN_TEMPERATURE=0.6 \
+  -e DISABLE_THINKING_FOR_TOOLS=true \
+  -e ROUTER_REFRESH_S=30 \
+  -e MONGO_URI="mongodb://ryan:PASS@192.168.86.48:27017/radiacode?authSource=radiacode" \
+  -e MONGO_DB=radiacode \
+  gcopilot-proxy
+```
+
+---
+
+## Local RTX 5090 (Backup)
 
 ```powershell
+# First-time setup (run once per machine)
 .\scripts\setup-local.ps1
+
+# Start proxy for the session
+.\scripts\start-proxy-local.ps1
+
+# Verify
+Invoke-RestMethod http://localhost:8001/health
 ```
 
-Installs Python deps into `.venv`, pulls the model (~18 GB), and creates the `qwen3` alias with large context window (`num_ctx=262144`). Run once after cloning.
-
-**The `qwen3` alias is critical.** Without it, Ollama defaults to 32K context, causing `finish_reason: length` errors on long agentic sessions. Actual usable context depends on GPU VRAM — ~128K on RTX 5090 (32GB), ~32K on 24GB GPUs due to KV cache limits.
+Dashboard: `http://localhost:8001/dashboard`
 
 ---
 
-## VS Code Client Config (`%APPDATA%\Code\User\chatLanguageModels.json`)
+## Repository Structure
 
-```json
-[{
-  "name": "Local RTX 5090",
-  "vendor": "customendpoint",
-  "apiKey": "no-key",
-  "apiType": "chat-completions",
-  "models": [{
-    "id": "qwen3",
-    "name": "Qwen3.6-27B (RTX 5090)",
-    "url": "http://localhost:8001/v1/chat/completions",
-    "toolCalling": true,
-    "vision": true,
-    "maxInputTokens": 120000,
-    "maxOutputTokens": 16000,
-    "thinking": true,
-    "streaming": true
-  }]
-}]
 ```
-
----
-
-## Proxy Endpoints
-
-| Endpoint | Purpose |
-|---|---|
-| `POST /v1/chat/completions` | OpenAI-compatible chat (VS Code talks here) |
-| `GET  /health` | Health check — returns `{"status":"ok","ollama":true}` |
-| `GET  /dashboard` | Full command-center dashboard — TPS sparkline, input/output charts, session stats, event log, request history (auto-refreshes 2s) |
-| `GET  /stats` | Raw JSON stats (active requests, combined TPS, total tokens) |
-
----
-
-## Repository Commands
-
-### DGX Spark (Primary)
-```
-Deploy everything     : python scripts/final-deploy.py           ← needs $env:DGXSPARK_SUDO_PASS
-Fix MongoDB only      : python scripts/fix_mongo_only.py         ← interactive password prompt
-SSH to device         : ssh dgxspark
-Dashboard             : http://192.168.86.39:8001/dashboard
-Health check          : curl http://192.168.86.39:8001/health
-Benchmark             : ssh dgxspark 'python3 ~/cbench.py'
-```
-
-### Local RTX 5090 (Backup)
-```powershell
-First-time setup     : .\scripts\setup-local.ps1
-Every session (all)  : .\scripts\go.ps1          ← one command does everything
-Start proxy only     : .\scripts\start-proxy-local.ps1
-Smoke test           : python scripts\test-proxy.py
-Warm up VRAM         : python scripts\warmup.py
-Build                : NOT APPLICABLE
-Unit tests           : NOT APPLICABLE (smoke tests only)
+proxy/
+  main.py              Dynamic FastAPI proxy (single /v1/chat/completions)
+  router.py            Backend router — auto-discovers Ollama + vLLM models
+  tracker.py           Thread-safe token throughput tracker (in-memory)
+  db.py                MongoDB async persistence layer
+  cost_engine.py       Cloud cost comparison engine
+  requirements.txt     Python dependencies
+  Dockerfile           Docker image definition
+  dashboard.html       Served at /dashboard (copy of dashboard/index.html)
+dashboard/
+  index.html           Standalone dashboard — pure HTML/JS, reads proxy API
+scripts/
+  deploy.py            Full deploy to DGX Spark (build + restart)
+  setup-local.ps1      One-time local .venv + dependency setup
+  start-proxy-local.ps1  Start proxy locally (RTX 5090)
+.env.example           Config template — copy to .env and fill in values
+AGENTS.md              This file
 ```
 
 ---
 
-## Known Issues
+## Environment Variables
 
-| Error | Root Cause | Fix |
+| Variable | Default | Description |
 |---|---|---|
-| `ERR_CONNECTION_REFUSED` | Proxy not running | Run `start-proxy-local.ps1` |
-| `finish_reason: length` / truncated | VRAM exhausted (KV cache full) or alias misconfigured | Re-run `setup-local.ps1`; lower `maxInputTokens` for 24GB GPUs |
-| `ModuleNotFoundError: fastapi` | System Python instead of .venv | Use `start-proxy-local.ps1` — calls `.venv\uvicorn.exe` directly |
-| First request slow (20-30s extra) | Model not in VRAM | Run `python scripts\warmup.py` after starting Ollama |
-| `maxOutputTokens` error | Cap too low for thinking mode | Set `maxOutputTokens: 16000` in `chatLanguageModels.json` |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama API endpoint |
+| `VLLM_BASE_URL` | _(empty)_ | Optional vLLM URL(s), comma-separated |
+| `MIN_TEMPERATURE` | `0.6` | Temperature floor for Qwen3 compatibility |
+| `DISABLE_THINKING_FOR_TOOLS` | `true` | Suppress thinking chains by default |
+| `ROUTER_REFRESH_S` | `30` | Seconds between backend re-discovery polls |
+| `MONGO_URI` | _(empty)_ | MongoDB connection string (optional) |
+| `MONGO_DB` | `radiacode` | MongoDB database name |
 
 ---
 
-## Architecture and Conventions
+## How Model Routing Works
 
-- **Language/framework:** Python 3.12, FastAPI, httpx, uvicorn
-- **All timeouts:** `None` (no hard limits — local model can take as long as it needs)
-- **Testing:** Smoke tests via `scripts/test-proxy.py`
-- **Error handling:** Proxy passes Ollama errors through unchanged with original HTTP status codes
-- **Logging:** stdout, INFO level, timestamped
-- **No credentials in repo:** No hardcoded IPs, keys, or `.env` files committed
+1. VS Code sends `POST /v1/chat/completions` with `"model": "qwen3"`
+2. `BackendRouter.get_backend("qwen3")` checks its registry
+3. Registry is built by polling `GET {OLLAMA_BASE_URL}/api/tags` every 30s
+4. If found in Ollama registry: route to `{ollama_url}/v1/chat/completions`
+5. If found in vLLM registry (if configured): route to vLLM
+6. If not found anywhere: route to Ollama anyway (auto-loads from disk on first hit)
+7. Temperature clamped to >= 0.6; thinking suppressed unless client opts in
 
-### Key Files
-
-| File | Purpose |
-|---|---|
-| `proxy/main.py` | FastAPI proxy — temp clamping, model name rewrite, streaming, token tracking, error handling |
-| `proxy/tracker.py` | Thread-safe real-time token throughput tracker (in-memory, no DB) |
-| `proxy/db.py` | MongoDB persistence layer (async via motor) |
-| `proxy/cost_engine.py` | Cost calculation engine for analytics |
-| `proxy/dashboard.html` | Full command-center dashboard — live charts, session stats, request history |
-| `proxy/Dockerfile` | Docker image definition for DGX Spark deployment |
-| `scripts/setup-local.ps1` | Local RTX 5090 one-time setup: .venv creation, model pull, qwen3 alias |
-| `scripts/start-proxy-local.ps1` | Start local proxy — run every session |
-| `scripts/final-deploy.py` | Deploy everything to DGX Spark (SFTP upload + Docker build/run) |
-| `scripts/fix_mongo_only.py` | Reload DGX Spark container with MongoDB env vars |
+**Model name matching:**
+- Exact: `"qwen3:latest"` matches `qwen3:latest`
+- Base alias: `"qwen3"` automatically matches `qwen3:latest`
+- Unknown model: falls through to Ollama (fails gracefully if not downloaded)
 
 ---
 
-## Security
+## Thinking Mode
 
-- **No credentials in repo** — `.env` is gitignored, no hardcoded IPs or keys committed
-- **Deployment scripts** (`final-deploy.py`, `dgxspark_reload.py`) are gitignored
-- **Docker sudo is NOPASSWD** — user `darkmatter2222` can run `sudo docker *` without a password (configured via `/etc/sudoers.d/docker-nopasswd`)
+The proxy suppresses thinking chains by default (`reasoning_effort=none`). This prevents:
+- Heavy think chains (100+ seconds) that break tool-calling
+- Empty responses caused by Ollama stripping `<think>` blocks
+
+To enable thinking for a request, the client must explicitly send:
+- `"reasoning_effort": "auto"` (or `"high"`, `"low"`)
+- Or `"thinking": {"type": "enabled"}` (Anthropic-style)
+
+VS Code with `"thinking": true` in `chatLanguageModels.json` will send `reasoning_effort=auto`
+automatically, enabling thinking for that model entry.
+
+---
+
+## Proxy Restart Protocol
+
+The VS Code Copilot session runs THROUGH this proxy. Restarting it terminates the current session.
+
+**Rules:**
+1. Make ALL code changes before issuing any restart command
+2. Use `python scripts/deploy.py` — builds and restarts atomically on the DGX
+3. Expect session termination — VS Code reconnects automatically on next message
+4. Never restart mid-task — only as the final action after all changes are complete
 
 ---
 
 ## Completion Report Format
 
-Before reporting completion, provide:
-
+Before reporting task completion, provide:
 1. **What changed** — which files were modified and why
-2. **Validation commands executed** — exact commands, in order
+2. **Validation commands** — exact commands run, in order
 3. **Validation results** — pass/fail for each, with relevant output
-4. **Assumptions made** — anything inferred rather than explicitly stated
+4. **Assumptions** — anything inferred rather than explicitly stated
 5. **Remaining limitations** — if any exist after completion
 
 ## Prohibited Shortcuts
-
 - Do not claim completion without running validation commands
 - Do not suppress errors, remove assertions, or disable checks to get a passing result
-- Do not introduce hardcoded credentials, secrets, or insecure defaults
-- Do not invent API signatures or module paths — read the source first
+- Do not hardcode model names, IPs, or credentials in proxy code
+- Do not invent API signatures — read source files first
