@@ -78,14 +78,20 @@ cd GithubCopilotExit
 
 Then open VS Code, fire up Copilot Chat, and select **Qwen3.6-27B (DGX Spark)**. You're live. 🎯
 
-### Who Is This For?
+### Hardware Requirements & Performance
 
-This repository is designed for developers who have high-end GPUs with 32GB+ VRAM, including:
-- **NVIDIA RTX 5090** (32 GB VRAM) - Provides excellent performance
-- **NVIDIA DGX Spark (GB10)** - The target platform for this configuration (122 GB unified memory)
-- **NVIDIA RTX 4090 / 3090** (24 GB VRAM) - Partial support with limited context
+> **Important:** This system works best with GPUs that have **32GB+ VRAM** for full context window capabilities (~128K tokens). While smaller GPUs can run models, they are limited in usability for complex coding tasks.
 
-The repository works best with models that require substantial VRAM and provide maximum context windows. While we've optimized primarily for the DGX Spark platform, all setups maintain full compatibility with other NVIDIA GPUs.
+## 🎯 System Architecture Overview 
+
+This repository is built with:
+- A **dynamic FastAPI proxy** that auto-discovers models from Ollama
+- Support for **containerized deployment** 
+- A full **analytics dashboard** for token tracking and performance monitoring
+- Integration with **MongoDB** (separate from the DGX Spark) for persistent analytics
+- Compatible with both **GitHub Copilot CLI** and **VS Code Copilot**
+
+> The MongoDB database is currently hosted on a remote server (192.168.86.48). You can easily move it to your own machine or container if desired.
 
 ![RTX 5090 Hardware](images/rtx_5090.jpg)
 
