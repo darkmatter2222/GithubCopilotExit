@@ -1,0 +1,100 @@
+name: "Copilot Setup Steps - DGX Spark Model Manager"
+
+# Automates model research, downloading, testing, and documentation updates for DGX Spark
+# Run from GitHub Actions tab to validate or trigger actions
+on:
+    workflow_dispatch:
+        inputs:
+            action:
+                description: "Action to perform"
+                required: true
+                default: "list-models"
+                options:
+                    - list-models
+                    - download-model
+                    - test-model
+            model_name:
+                description: "Ollama model name (e.g., qwen3-coder-next:q8_0)"
+                required: false
+                default: ""
+    push:
+        paths:
+            - .github/workflows/copilot-setup-steps.yml
+
+jobs:
+    copilot-setup-steps:
+        runs-on: ubuntu-latest
+        timeout-minutes: 30
+        permissions:
+            contents: read
+
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v5
+
+            - name: Show configuration
+              run: |
+                  echo "DGX Spark: 192.168.86.39 (NVIDIA GB10 Blackwell, 122 GB unified memory)"
+                  echo "Proxy: http://192.168.86.39:8001"
+                  echo "Ollama auto-discovers models every 30s - no code changes needed"
+
+            - name: List current models on DGX Spark
+              if: github.event.inputs.action == 'list-models'
+              run: |
+                  cat << 'USAGE'
+                  === How to add new models to DGX Spark ===
+                  
+                  From any SSH session:
+                    ssh dgxspark "ollama pull <model-name>"
+                    # Proxy auto-discovers within 30 seconds
+                    
+                  Currently installed models will be shown below.
+                  
+                  === Recommended Tier-1 Flagman Coding Models ===
+                  Model                          Size     SWE-bench    Notes
+                  qwen3-coder-next:q8_0          84 GB    ~74%        Best coding MoE model (Feb 2026)
+                  phi4                           ~9 GB    -           Best reasoning-to-size ratio
+                  granite3.3:8b                   ~6 GB    -           Fast enterprise coder
+                  deepseek-r1:32b                ~24 GB   -           Strong reasoning (distilled)
+                  
+                  === To Remove a Model ===
+                    ssh dgxspark "ollama rm <model-name>"
+                  USAGE
+
+            - name: Download specific model
+              if: github.event.inputs.action == 'download-model' && github.event.inputs.model_name != ''
+              run: |
+                  # This step provides instructions - actual download via SSH
+                  MODEL="${{ github.event.inputs.model_name }}"
+                  echo "To download $MODEL:"
+                  echo "  ssh dgxspark \"ollama pull $MODEL\""
+                  echo ""
+                  echo "Then verify: ssh dgxspark 'ollama list' | grep '$MODEL'"
+                  echo ""
+                  echo "Test via proxy:"
+                  echo "  curl -s http://192.168.86.39:8001/v1/chat/completions \\"
+                  echo "    -H 'Content-Type: application/json' \\"
+                  echo "    -d '{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"OK?\"}],\"max_tokens\":10}'"
+
+            - name: Test model via proxy
+              if: github.event.inputs.action == 'test-model' && github.event.inputs.model_name != ''
+              run: |
+                  MODEL="${{ github.event.inputs.model_name }}"
+                  echo "To test $MODEL via the proxy API:"
+                  echo "  curl -s http://192.168.86.39:8001/v1/chat/completions \\"
+                  echo "    -H 'Content-Type: application/json' \\"
+                  echo "    -d '{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Write a Python fibonacci function.\"}],\"max_tokens\":256}'"
+                  
+            - name: Show proxy health status
+              run: |
+                  echo "=== Proxy Health Check ==="
+                  # Note: this won't work from GitHub Actions cloud runners (no access to private network)
+                  # It serves as reference for local testing
+                  cat << 'HEALTH_CHECK_CMDS'
+                  To verify proxy is running:
+                    curl http://192.168.86.39:8001/health          # Health check
+                    curl http://192.168.86.39:8001/stats         # Real-time stats
+                    curl http://192.168.86.39:8001/v1/models    # Available models
+                    ssh dgxspark "ollama ps"                     # Models in VRAM
+                    curl -X POST http://192.168.86.39:8001/api/router/refresh  # Force refresh
+                  HEALTH_CHECK_CMDS

@@ -116,9 +116,16 @@ tr:hover td{background:rgba(255,255,255,.02)}
 .mmc{background:var(--card2);border:1px solid var(--border);border-radius:3px;padding:0;overflow:hidden;transition:border-color .2s,box-shadow .2s}
 .mmc.loaded{border-color:rgba(118,185,0,.45);box-shadow:0 0 12px rgba(118,185,0,.08)}
 .mmc:hover{border-color:#444}
+.mmc.is-alias-card{opacity:.82;border-left:3px solid var(--teal)}
+.mmc.is-base-hidden{display:none !important}
 .mc{background:var(--card2);border:1px solid var(--border);border-radius:2px;padding:9px 11px}
 .mh{display:flex;align-items:center;justify-content:space-between;padding:8px 10px 6px;cursor:pointer;user-select:none}
 .mh-name{font-size:.78rem;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.mh-meta{display:flex;gap:4px;align-items:center;margin-bottom:2px}
+.mh-link{font-size:.56rem;color:var(--teal);text-decoration:underline;cursor:pointer;flex-shrink:0}
+.mh-link:hover{color:var(--blue)}
+.mh-tag-alias{font-size:.54rem;padding:1px 4px;border-radius:2px;background:rgba(0,163,224,.1);color:var(--teal);letter-spacing:.02em;font-weight:600;flex-shrink:0}
+.mh-tag-base{font-size:.54rem;padding:1px 4px;border-radius:2px;background:rgba(255,193,7,.08);color:var(--yellow);letter-spacing:.02em;font-weight:600;flex-shrink:0}
 .mh-expand{font-size:.55rem;color:var(--sub);transition:transform .2s;flex-shrink:0;margin-left:6px}
 .mh-expand.open{transform:rotate(180deg)}
 .ms{display:flex;gap:4px;padding:0 10px 6px}
@@ -127,11 +134,16 @@ tr:hover td{background:rgba(255,255,255,.02)}
 .sb-load{background:rgba(118,185,0,.12);color:var(--nv)}
 .sb-upd{background:rgba(118,185,0,.08);color:var(--nv)}
 .sb-upd.has-update{background:rgba(255,193,7,.12);color:var(--yellow)}
+.sb-unknown{background:rgba(255,255,255,.04);color:var(--sub)}
 .mc-rows{padding:0 10px 8px}
 .mc-row{display:flex;gap:6px;font-size:.64rem;padding:2px 0;border-top:1px solid #1a1a1a}
 .mc-row:first-child{border-top:none}
 .mc-row-l{color:var(--sub);min-width:72px;text-transform:uppercase;letter-spacing:.06em;font-weight:600}
 .mc-row-v{font-family:var(--mono);color:var(--text)}
+.mh-expand-wrap{display:flex;align-items:center;justify-content:space-between;padding:8px 10px 4px;cursor:pointer;user-select:none}
+.mh-expand-wrap .detail-toggle-btn{font-size:.55rem;color:var(--sub);background:none;border:1px solid var(--border);padding:1px 6px;border-radius:2px;cursor:pointer}
+.mh-expand-wrap .detail-toggle-btn:hover{color:var(--text);border-color:#444}
+.expand-all-bar{display:flex;justify-content:flex-end;padding:0 0 4px}
 .mc-cap-icons{display:flex;gap:5px;padding:4px 10px 8px}
 .cap-i{font-size:.6rem;padding:2px 6px;border-radius:2px;background:#1a1a1a;color:var(--sub);letter-spacing:.02em}
 .cap-i.active{background:rgba(0,163,224,.1);color:var(--blue)}
@@ -142,7 +154,6 @@ tr:hover td{background:rgba(255,255,255,.02)}
 .mfbar button{padding:2px 8px;border-radius:2px;font-size:.6rem;font-weight:700;cursor:pointer;background:#1c1c1c;color:var(--sub);border:1px solid var(--border)}
 .mfbar button:hover{color:var(--text);border-color:#444}
 .mfbar button.active{background:var(--nv);color:#000;border-color:var(--nv)}
-.models-checking{font-size:.58rem;color:var(--teal);font-family:var(--mono);display:none}
 
 /* ── PILLS ── */
 .pill-group{display:flex;gap:2px}
@@ -365,8 +376,13 @@ tr:hover td{background:rgba(255,255,255,.02)}
     <button id="f-vllm" onclick="toggleFilter(this,'vllm')">vLLM</button>
     <button id="f-moe" class="active" onclick="toggleFilter(this,'moe')">MoE</button>
     <button id="f-dense" class="active" onclick="toggleFilter(this,'dense')">Dense</button>
+    <button id="f-base-only" onclick="toggleFilter(this,'baseOnly')">Hide Base Copies (show originals only)</button>
     <span id="mk-checking" class="models-checking">⟳ checking registry…</span>
   </div>
+
+  <div class="expand-all-bar"><button style="font-size:.56rem;padding:1px 8px;border-radius:2px;background:#1c1c1c;color:var(--sub);border:1px solid var(--border);cursor:pointer" onclick="toggleAllDetails()">
+    <span id="expandAllLabel">[+] Expand All Details</span>
+  </button></div>
 
   <div class="g3" id="models-grid"></div>
   <div id="models-empty" style="display:none;text-align:center;padding:40px;color:var(--sub);font-size:.76rem;text-transform:uppercase;letter-spacing:.08em">No models discovered — check Ollama is running</div>
@@ -955,13 +971,31 @@ async function refreshLive() {
 }
 
 // ── Models page (enriched) ────────────────────────────────────────────────
-let _modelUpdateState = {};  // keyed by model id: {status, registry_modified}
+let _modelUpdateState = {};  // keyed by model id: {status, registry_modified, registry_version}
 let _activeFilters = new Set(['ollama','vllm','moe','dense']);
+let _hideBaseCopies = false;    // when true, show only alias cards for alias groups — hide the hf.co base copy
+let _detailsExpanded = true;    // default: all detail rows visible immediately
+let _lastUpdateCheck = 0;       // timestamp of last update check (ms)
+const UPDATE_CHECK_MAX_AGE = 60 * 1000; // auto-check updates at most once per minute on models tab visit
 
 function toggleFilter(btn, filter) {
-  if (_activeFilters.has(filter)) { _activeFilters.delete(filter); btn.classList.remove('active'); }
-  else { _activeFilters.add(filter); btn.classList.add('active'); }
+  if (filter === 'baseOnly') {
+    _hideBaseCopies = !_hideBaseCopies;
+    btn.classList.toggle('active', _hideBaseCopies);
+  } else {
+    if (_activeFilters.has(filter)) { _activeFilters.delete(filter); btn.classList.remove('active'); }
+    else { _activeFilters.add(filter); btn.classList.add('active'); }
+  }
   loadModels();
+}
+
+function toggleAllDetails() {
+  _detailsExpanded = !_detailsExpanded;
+  const lbl = $('expandAllLabel');
+  if (lbl) lbl.textContent = _detailsExpanded ? '[-] Collapse All Details' : '[+] Expand All Details';
+  document.querySelectorAll('.detail-panel').forEach(dp => {
+    dp.style.display = _detailsExpanded ? '' : 'none';
+  });
 }
 
 function timeAgo(isoStr) {
@@ -980,72 +1014,149 @@ function formatParams(n) {
   return n.toLocaleString();
 }
 
-function renderModelCard(m, expanded) {
+/** Build a "human" display name that is informative even for hf.co models */
+function modelDisplayName(m) {
+  let id = m.id;
+  // For hf.co/OBLITERATUS models, detect underlying base from parameter count or family
+  if (id.startsWith('hf.co/')) {
+    const parts = id.replace(/^hf\.co\//, '').split('/');
+    const modelPart = parts[parts.length - 1];
+
+    let baseName = '';
+    // Try to read parent_model hint from enriched metadata
+    if (m.parent_model && !m.parent_model.startsWith('hf.co')) {
+      baseName = m.parent_model;
+    } else {
+      // Heuristic: family + parameter_size
+      const family = (m.family || '').toLowerCase();
+      const paramSz = (m.parameter_size || '').toLowerCase();
+      if (family.includes('qwen') && (paramSz.includes('27') || m.parameter_count_exact > 20e9)) {
+        baseName = 'Qwen3.6 27B';
+      } else if (family.includes('qwen')) {
+        baseName = 'Qwen3';
+      } else {
+        baseName = parts[0].toUpperCase() + '/' + modelPart;
+      }
+    }
+
+    // Strip hf.co/ prefix from parent for display, clean tag
+    let cleanBase = baseName.replace(/^hf\.co\/[^/]+\//, '').replace(/:.*/, '');
+    const isOb = id.includes('OBLITERATUS') || m.license_short === 'Space';
+    let displayName = cleanBase.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    if (isOb) displayName = displayName + ' (Uncensored)';
+    if (m.quantization_level && !displayName.includes('Q')) {
+      displayName = displayName + ' [' + m.quantization_level + ']';
+    }
+    return displayName;
+  }
+
+  // For "obliterated:latest" alias - show what it really points to
+  if (id === 'obliterated:latest' && m.parent_model) {
+    const parentClean = m.parent_model.replace(/^hf\.co\/OBLITERATUS\//, '').replace(/:.*/, '');
+    return `Qwen3 Uncensored → ${parentClean}`;
+  }
+
+  // Default: clean name from id
+  let name = id.replace(/:.+$/, '');
+  return name.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+/** Build link URL for model info */
+function modelInfoUrl(m) {
+  const id = m.id;
+  if (id.startsWith('hf.co/')) {
+    // Strip tag suffix for HuggingFace URL
+    return `https://huggingface.co/${id.replace(/^hf\.co\//, '').replace(/:.*/, '')}`;
+  }
+  const modelName = id.split(':')[0];
+  return `https://ollama.com/library/${modelName}`;
+}
+
+function renderModelCard(m) {
   const isMoE = (m.expert_count || 0) > 0;
   const arch = isMoE ? 'MoE' : 'Dense';
   const ctxStr = m.context_length ? (m.context_length >= 1024 ? Math.floor(m.context_length/1024)+'K' : m.context_length) : '—';
-  const sizeGB = m.size_mb ? (m.size_mb / 1024).toFixed(1) : '—';
+  const sizeGB = m.size_mb ? (m.size_mb / 1024).toFixed(2) : '—';
+
+  // Update status badge
   const updateStatus = _modelUpdateState[m.id];
   const hasUpdate = updateStatus && updateStatus.status === 'update_available';
   const isUpToDate = updateStatus && updateStatus.status === 'up_to_date';
+  const isUnknown = updateStatus && updateStatus.status === 'unknown';
 
-  let capIcons = `<span class="cap-i${m.capabilities?.includes('completion')?' active':''}">Complete</span>`;
-  if (m.capabilities?.includes('tools')) capIcons += `<span class="cap-i active">Tools</span>`;
-  if (m.capabilities?.includes('thinking')) capIcons += `<span class="cap-i active">Think</span>`;
-  if (m.capabilities?.includes('vision')) capIcons += `<span class="cap-i active">Vision</span>`;
+  let updateBadge = '';
+  if (hasUpdate) updateBadge = `<span class="sb sb-upd has-update" title="New version: ${updateStatus.registry_modified || ''}">⚠ Update</span>`;
+  else if (isUpToDate) updateBadge = '<span class="sb sb-upd">✓ Current</span>';
+  else if (isUnknown) updateBadge = '<span class="sb sb-unknown" title="Custom / private model — no registry tracking">? Custom</span>';
 
+  // Alias / Base badge in header
+  let tagHtml = '';
+  if (m.is_alias) {
+    const baseShort = (m.parent_model || '?').replace(/^hf\.co\/[^/]+\//, '').replace(/:.*/, '');
+    tagHtml = `<span class="mh-tag-alias" title="Alias of: ${m.parent_model}">ALIAS → ${baseShort}</span>`;
+  } else {
+    tagHtml = '<span class="mh-tag-base">BASE MODEL</span>';
+  }
+
+  // Info link
+  const infoUrl = modelInfoUrl(m);
+
+  let capIcons = '';
+  if (m.capabilities?.includes('completion')) capIcons += '<span class="cap-i active">Complete</span>';
+  if (m.capabilities?.includes('tools') || m.capabilities?.includes('function_calling')) capIcons += '<span class="cap-i active">Tools</span>';
+  if (m.capabilities?.includes('thinking')) capIcons += '<span class="cap-i active">Think</span>';
+  if (m.capabilities?.includes('vision')) capIcons += '<span class="cap-i active">Vision</span>';
+
+  // Detail rows - always rendered, visibility controlled by _detailsExpanded
   let detailRows = '';
-  detailRows += `<div class="mc-row"><span class="mc-row-l">Params</span><span class="mc-row-v">${formatParams(m.parameter_count_exact) || m.parameter_size || '—'}</span></div>`;
-  detailRows += `<div class="mc-row"><span class="mc-row-l">Size</span><span class="mc-row-v">${sizeGB} GB</span></div>`;
-  detailRows += `<div class="mc-row"><span class="mc-row-l">Quant</span><span class="mc-row-v">${m.quantization_level || '—'}</span></div>`;
-  detailRows += `<div class="mc-row"><span class="mc-row-l">Family</span><span class="mc-row-v">${m.family||'?'}</span></div>`;
-  if (isMoE) detailRows += `<div class="mc-row"><span class="mc-row-l">Experts</span><span class="mc-row-v">${m.expert_count} total (${m.expert_used_count||'?'} active)</span></div>`;
+  const paramStr = formatParams(m.parameter_count_exact) || m.parameter_size || '—';
+  detailRows += `<div class="mc-row"><span class="mc-row-l">Parameters</span><span class="mc-row-v">${paramStr}</span></div>`;
+  if (m.is_alias && m.parent_model) {
+    detailRows += `<div class="mc-row"><span class="mc-row-l">Alias Of</span><span class="mc-row-v" style="color:var(--teal)">${m.parent_model}</span></div>`;
+  }
+  detailRows += `<div class="mc-row"><span class="mc-row-l">Disk Size</span><span class="mc-row-v">${sizeGB} GB</span></div>`;
+  detailRows += `<div class="mc-row"><span class="mc-row-l">Quantization</span><span class="mc-row-v">${m.quantization_level || '—'}</span></div>`;
+  detailRows += `<div class="mc-row"><span class="mc-row-l">Family</span><span class="mc-row-v">${(m.families||[]).join(', ') || m.family || '?'}</span></div>`;
+  if (isMoE) detailRows += `<div class="mc-row"><span class="mc-row-l">Experts</span><span class="mc-row-v">${m.expert_count} total, ${m.expert_used_count||'?'} active</span></div>`;
   detailRows += `<div class="mc-row"><span class="mc-row-l">Blocks</span><span class="mc-row-v">${m.block_count||'—'}</span></div>`;
   detailRows += `<div class="mc-row"><span class="mc-row-l">Context</span><span class="mc-row-v">${m.context_length?.toLocaleString() || '—'} tokens</span></div>`;
   detailRows += `<div class="mc-row"><span class="mc-row-l">Modified</span><span class="mc-row-v">${timeAgo(m.modified_at)}</span></div>`;
   detailRows += `<div class="mc-row"><span class="mc-row-l">License</span><span class="mc-row-v">${m.license_short||'Unknown'}</span></div>`;
-  if (m.is_alias) detailRows += `<div class="mc-row"><span class="mc-row-l">Base</span><span class="mc-row-v" style="color:var(--teal)">${m.parent_model}</span></div>`;
+  detailRows += `<div class="mc-row"><span class="mc-row-l">Update</span><span class="mc-row-v">${updateBadge || 'Not checked'}</span></div>`;
 
-  return `<div class="mmc${m.is_loaded?' loaded':''}" data-moe="${isMoE}" data-arch="${arch}" data-backend="${m.backend}">
-    <div class="mh" onclick="toggleExpand(this)">
-      <span class="mh-name">${modelDisplayName(m.id)}</span>
-      <span class="mh-expand${expanded?' open':''}">▼</span>
+  return `<div class="mmc${m.is_loaded?' loaded':''}${m.is_alias?' is-alias-card':''}" data-moe="${isMoE}" data-arch="${arch}" data-backend="${m.backend}" data-digest="${m.digest||''}">
+    <div class="mh-meta">
+      <span class="mh-name" title="${m.id}">${modelDisplayName(m)}</span>
+      ${tagHtml}
     </div>
     <div class="ms">
       <span class="sb sb-arch">${arch}${m.quantization_level?' '+m.quantization_level:''}</span>
-      <span class="tag tag-gray">${m.parameter_size||'?'}</span>
+      <span class="tag tag-gray">${paramStr}</span>
       <span class="tag tag-gray">${ctxStr} ctx</span>
       ${m.is_loaded ? '<span class="sb sb-load">● VRAM</span>' : ''}
-      ${hasUpdate ? '<span class="sb sb-upd has-update">⚠ Update</span>' : ''}
-      ${isUpToDate ? '<span class="sb sb-upd">✓ Current</span>' : ''}
+      ${updateBadge ? updateBadge : ''}
     </div>
     <div class="mc-cap-icons">${capIcons}</div>
-    <div class="detail-panel mc-rows" style="display:none">${detailRows}</div>
+    <div style="padding:0 10px 2px"><a href="${infoUrl}" target="_blank" rel="noopener" class="mh-link">ℹ Model Info ↗</a></div>
+    <div class="detail-panel mc-rows" style="display: ${_detailsExpanded?'':'none'}">${detailRows}</div>
   </div>`;
-}
-
-function modelDisplayName(id) {
-  // Clean display name — remove hf.co/OBLITERATUS/ prefix, etc.
-  let name = id.replace(/^hf\.co\/[^/]+\//, '').replace(/:.+$/, '');
-  return name.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-}
-
-function toggleExpand(hdr) {
-  const detail = hdr.closest('.mmc').querySelector('.detail-panel');
-  const arrow = hdr.querySelector('.mh-expand');
-  if (detail.style.display === 'none') { detail.style.display = ''; arrow.classList.add('open'); }
-  else { detail.style.display = 'none'; arrow.classList.remove('open'); }
 }
 
 async function loadModels() {
   const grid = $('models-grid'), empty = $('models-empty');
   grid.innerHTML = '<div style="color:var(--sub);padding:16px;font-size:.74rem">Loading…</div>';
   empty.style.display = 'none';
+
+  // Auto-check updates if last check is stale (>1 minute) and state is empty or old
+  if (Date.now() - _lastUpdateCheck > UPDATE_CHECK_MAX_AGE) {
+    await silentUpdateCheck();
+  }
+
   try {
     const er = await pFetch('/api/models/enriched').then(r => r.json());
     let models = er.data || [];
 
-    // KPIs
+    // KPIs (always computed on full list)
     $('mk-total').textContent = models.length;
     $('mk-running').textContent = models.filter(m => m.is_loaded).length;
     $('mk-ollama').textContent = models.filter(m => m.backend === 'ollama').length;
@@ -1056,7 +1167,7 @@ async function loadModels() {
     $('mk-moe').textContent = models.filter(m => (m.expert_count || 0) > 0).length;
     $('mk-dense').textContent = models.filter(m => (m.expert_count || 0) === 0).length;
 
-    // Filter
+    // Filter by backend/arch type
     if (_activeFilters.size < 4) {
       models = models.filter(m => {
         const backendOk = _activeFilters.has('ollama') && m.backend === 'ollama'
@@ -1065,6 +1176,14 @@ async function loadModels() {
         const archOk = (isMoE && _activeFilters.has('moe')) || (!isMoE && _activeFilters.has('dense'));
         return backendOk && archOk;
       });
+    }
+
+    // Hide hf.co base copies when "Hide Base Copies" is active — but only if an alias exists for the same group
+    if (_hideBaseCopies) {
+      const allModels = er.data || [];
+      const hasAliasForDigest = new Set();
+      allModels.filter(a => a.is_alias && a.digest).forEach(a => hasAliasForDigest.add(a.digest));
+      models = models.filter(m => !(m.id.startsWith('hf.co/') && hasAliasForDigest.has(m.digest)));
     }
 
     // Sort
@@ -1081,15 +1200,23 @@ async function loadModels() {
       grid.innerHTML = ''; empty.style.display = '';
       if (_activeFilters.size < 4) {
         empty.textContent = 'No models match current filters';
-        return;
       } else {
         empty.textContent = 'No models discovered — check Ollama is running';
       }
       return;
     }
 
-    grid.innerHTML = models.map(m => renderModelCard(m, false)).join('');
+    grid.innerHTML = models.map(m => renderModelCard(m)).join('');
   } catch(e) { grid.innerHTML = `<div style="color:var(--red);padding:16px">${e.message}</div>`; }
+}
+
+// Silent update check — no UI feedback, just updates state for rendering
+async function silentUpdateCheck() {
+  try {
+    const r = await pFetch('/api/models/check-updates', { method: 'POST' }).then(r => r.json());
+    _modelUpdateState = (r.statuses || r);
+    _lastUpdateCheck = Date.now();
+  } catch(e) { console.warn('silent update check failed', e); }
 }
 
 async function checkModelUpdates() {
@@ -1098,6 +1225,7 @@ async function checkModelUpdates() {
   try {
     const r = await pFetch('/api/models/check-updates', { method: 'POST' }).then(r => r.json());
     _modelUpdateState = (r.statuses || r);
+    _lastUpdateCheck = Date.now();
     loadModels();
   } catch(e) { console.warn('update check failed', e); }
   finally { btn.disabled = false; checking.style.display = 'none'; }
