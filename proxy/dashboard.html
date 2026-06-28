@@ -1097,7 +1097,7 @@ async function checkModelUpdates() {
   btn.disabled = true; checking.style.display = '';
   try {
     const r = await pFetch('/api/models/check-updates', { method: 'POST' }).then(r => r.json());
-    _modelUpdateState = (r.statuses || {});
+    _modelUpdateState = (r.statuses || r);
     loadModels();
   } catch(e) { console.warn('update check failed', e); }
   finally { btn.disabled = false; checking.style.display = 'none'; }
