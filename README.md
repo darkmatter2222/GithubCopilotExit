@@ -156,7 +156,7 @@ This repository is built with:
 
 ---
 
-## 💾 Context & VRAM — Why This Matters
+## 💾 Context & VRAM — Why This Matters - Hardware Requirements
 
 The `qwen3` alias configures a **262K context window** (`num_ctx = 262144`), but your *usable* context is determined by available VRAM after loading the model weights:
 
@@ -170,16 +170,55 @@ VRAM Budget (DGX Spark, 122 GB total):
 
 > **KV cache is the hidden cost.** Every input token loaded into context reserves VRAM for its key/value states. More context = more VRAM consumed before generation even begins. If the KV cache exhausts available VRAM, Ollama will offload to CPU (slow) or truncate entirely.
 
-### GPU Compatibility Reality Check
+## 🎯 Hardware Platforms & VRAM Requirements
 
-| GPU | Total VRAM | Model Weights (Q4) | Remaining for KV Cache | Usable Context | Verdict |
-| --- | ---------- | ------------------ | ---------------------- | -------------- | ------- |
-| **DGX Spark** | 122 GB | ~18 GB | ~100 GB | **~128K tokens** | ✅ Excellent — full experience |
-| **RTX 5090** | 32 GB | ~18 GB | ~12 GB | **~128K tokens** | ✅ Excellent — full experience |
-| **RTX 4090 / 3090** | 24 GB | ~18 GB | ~4 GB | **~32K tokens** | ⚠️ Works but limited context — see below |
-| **< 20 GB VRAM** | -- | Model won't fit | N/A | Won't run | ❌ Not viable for this model |
+**Important:** The performance and capability of this LLM stack depends heavily on your GPU's VRAM capacity:
 
-> **⚠️ RTX 4090/3090 (24 GB) users:** The Q4 quantized model weights alone consume ~18 GB, leaving only ~4-6 GB for the KV cache. This means your *theoretical* context is 262K but you'll realistically get **~32K usable tokens** before VRAM runs out. You can still do great coding work — it's plenty for most tasks — just don't try to stuff an entire codebase into one conversation. Consider lowering `maxInputTokens` in your config to avoid VRAM exhaustion errors.
+### 🟢 **Tier 1: Optimized Performance (32GB+ VRAM Required)**
+
+| GPU Model | Total VRAM | Model Weights (Q4) | KV Cache Budget | Usable Context | Verdict |
+|-----------|------------|-------------------|-----------------|----------------|---------|
+| **NVIDIA DGX Spark (GB10)** | 122 GB | ~18 GB | ~100 GB | **~128K tokens** | ✅ **Excellent — Full experience** |
+| **NVIDIA RTX 5090** | 32 GB | ~18 GB | ~12 GB | **~128K tokens** | ✅ **Excellent — Full experience** |
+
+### 🟡 **Tier 2: Functional Performance (24GB VRAM)**
+
+| GPU Model | Total VRAM | Model Weights (Q4) | KV Cache Budget | Usable Context | Verdict |
+|-----------|------------|-------------------|-----------------|----------------|---------|
+| **NVIDIA RTX 4090** | 24 GB | ~18 GB | ~4 GB | **~32K tokens** | ⚠️ **Works but limited context** |
+| **NVIDIA RTX 3090** | 24 GB | ~18 GB | ~4 GB | **~32K tokens** | ⚠️ **Works but limited context** |
+
+### 🔴 **Tier 3: Limited / Not Recommended (16GB or less)**
+
+| GPU Model | Total VRAM | Model Weights (Q4) | KV Cache Budget | Usable Context | Verdict |
+|-----------|------------|-------------------|-----------------|----------------|---------|
+| **NVIDIA RTX 20xx / TITAN V** | ~16 GB | Model won't fit | N/A | Won't run reliably | ❌ **Not viable for this model** |
+
+> **Key insight: The VRAM requirement is the main bottleneck.**
+> - With Q4 quantization, models require ~18GB of VRAM just to run weights
+> - The remaining VRAM becomes your usable KV cache for context windows
+> - RTX 5090 (32GB) and DGX Spark (122GB) provide enough headroom for full context
+> - RTX 4090/3090 (24GB) works but severely limits context to ~32K tokens
+
+## 🚀 Platform-Specific Recommendations 
+
+### For **NVIDIA DGX Spark (GB10)** – The Ultimate Local LLM Experience
+- 122 GB unified memory for maximum performance
+- ~100 GB available for KV cache 
+- Handles full 128K+ token context windows without limitations
+- Ideal target platform for this repository
+
+### For **NVIDIA RTX 5090** – Excellent Performance at Great Value  
+- 32 GB VRAM with optimal balance of performance and cost
+- Full context window capability (~128K tokens)
+- Direct replacement for DGX Spark in many scenarios
+
+### For **NVIDIA RTX 4090/3090** – Budget Option with Limitations
+- 24 GB VRAM requires careful usage for full context  
+- Maximum context is approximately ~32K tokens
+- Ideal for basic coding tasks but not optimal for large files or complex reasoning
+
+The repository provides dynamic configuration that works across platforms while clearly documenting these capabilities. Use the table above to understand what models will offer on your specific hardware.
 
 ---
 
