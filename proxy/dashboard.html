@@ -430,6 +430,46 @@ tr:hover td{background:rgba(255,255,255,.02)}
 <script>
 'use strict';
 
+// ════════════════════════════════════════════════════════════════════════
+//  PROXY_URL — override for remote dashboard deployment.
+//
+//  When the dashboard runs on the same host as the proxy (default), leave
+//  this empty so all fetch() calls resolve to the same origin.
+//
+//  When the dashboard container is deployed on a separate server, set this
+//  to the full URL of the proxy — hostname preferred over IP:
+//
+//    const PROXY_URL = "http://dgxspark:8001";
+//
+//  This variable can also be injected at runtime by the dashboard HTTP
+//  server (see dashboard/serve.py). The server reads PROXY_URL from its
+//  environment and injects window.__PROXY_URL before </head> so this
+//  block picks it up automatically.
+// ════════════════════════════════════════════════════════════════════════
+const PROXY_URL = window.__PROXY_URL || "";
+
+/**
+ *  BASE_PATH — path prefix injected when the dashboard is served behind
+ *  a reverse proxy (e.g. nginx at /copilot/).  pFetch prepends this so
+ *  relative API calls reach the correct nginx location block even when
+ *  PROXY_URL is empty (server-side proxy mode).
+ *
+ *  Injected by serve.py before </head>.  Typical value: "/copilot".
+ */
+const BASE_PATH = window.__BASE_PATH || "";
+
+/**
+ * pFetch — like fetch(), but prepends PROXY_URL so the dashboard can
+ * talk to a proxy on a different host when deployed remotely.
+ *
+ * When PROXY_URL is empty (default), resolves exactly like fetch().
+ * When PROXY_URL is set, prepends it to every path.
+ */
+function pFetch(path, opts) {
+  const target = PROXY_URL ? PROXY_URL + path : BASE_PATH + path;
+  return fetch(target, opts);
+}
+
 // ── Utilities ─────────────────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
 const nf = (n, d=0) => {
@@ -749,7 +789,7 @@ function updateTpsChart(history, currentTps) {
 // ── VRAM models ───────────────────────────────────────────────────────────
 async function updateVramModels() {
   try {
-    const data = await fetch('/api/models/running').then(r=>r.json());
+    const data = await pFetch('/api/models/running').then(r=>r.json());
     const models = data.data||[];
     $('vram-count').textContent = `${models.length} loaded`;
     const el = $('vram-models');
@@ -806,7 +846,7 @@ function renderLog() {
 // ── DB check ──────────────────────────────────────────────────────────────
 async function checkDb() {
   try {
-    const r = await fetch('/api/stats/summary?days=1');
+    const r = await pFetch('/api/stats/summary?days=1');
     const d = await r.json();
     const ok = r.ok && d.total_requests !== undefined;
     $('db-status').textContent = ok ? 'DB ✓' : 'DB ✗';
@@ -819,7 +859,7 @@ let _vramCtr=0;
 async function refreshLive() {
   const dot=$('rdot'); if(dot) dot.classList.add('on');
   try {
-    const d = await fetch('/stats').then(r=>r.json());
+    const d = await pFetch('/stats').then(r=>r.json());
     $('kpi-tps').textContent   = (d.combined_tps||0).toFixed(1);
     $('kpi-up').textContent    = fUp(d.session_uptime_s);
     $('kpi-reqs').textContent  = nf(d.total_requests);
@@ -878,8 +918,8 @@ async function loadModels() {
   empty.style.display='none';
   try {
     const [mr, rr] = await Promise.all([
-      fetch('/v1/models').then(r=>r.json()),
-      fetch('/api/models/running').then(r=>r.json()).catch(()=>({data:[]}))
+      pFetch('/v1/models').then(r=>r.json()),
+      pFetch('/api/models/running').then(r=>r.json()).catch(()=>({data:[]}))
     ]);
     const models=mr.data||[], running=new Set((rr.data||[]).map(m=>m.name));
     $('mk-total').textContent   = models.length;
@@ -917,8 +957,8 @@ function setHistDays(d, btn) {
 async function loadHistory() {
   try {
     const [sr, hr] = await Promise.all([
-      fetch(`/api/stats/summary?days=${_histDays}`).then(r=>r.json()),
-      fetch(`/api/history?days=${_histDays}&limit=200`).then(r=>r.json())
+      pFetch(`/api/stats/summary?days=${_histDays}`).then(r=>r.json()),
+      pFetch(`/api/history?days=${_histDays}&limit=200`).then(r=>r.json())
     ]);
     const noDb = !sr || sr.total_requests === undefined;
     $('hist-no-db').style.display    = noDb ? '' : 'none';
@@ -961,8 +1001,8 @@ function setUsageDays(d, btn) {
 async function loadUsage() {
   try {
     const [dr, hr] = await Promise.all([
-      fetch(`/api/usage/daily?days=${_usageDays}`).then(r=>r.json()),
-      fetch(`/api/usage/hourly?days=7`).then(r=>r.json())
+      pFetch(`/api/usage/daily?days=${_usageDays}`).then(r=>r.json()),
+      pFetch(`/api/usage/hourly?days=7`).then(r=>r.json())
     ]);
     const daily=dr.data||[], hourly=hr.data||[];
     const noData = !daily.length && !hourly.length;
@@ -994,7 +1034,7 @@ function setCostDays(d, btn) {
 }
 async function loadCostPage() {
   try {
-    const s = await fetch(`/api/cost/summary?days=${_costDays}`).then(r=>r.json());
+    const s = await pFetch(`/api/cost/summary?days=${_costDays}`).then(r=>r.json());
     const noData = !s || s.total_requests === undefined;
     $('cost-no-db').style.display = noData ? '' : 'none';
     if (noData) return;
@@ -1018,7 +1058,7 @@ async function loadCostPage() {
         <span style="font-weight:700">Saved vs cloud high</span>
         <span style="color:var(--nv);font-weight:700;font-family:var(--mono)">${f$(s.savings_vs_high||0)}</span>
       </div>`;
-    const dr = await fetch(`/api/cost/daily?days=${_costDays}`).then(r=>r.json());
+    const dr = await pFetch(`/api/cost/daily?days=${_costDays}`).then(r=>r.json());
     const dd = dr.data||[];
     if (dd.length) {
       const lbl = dd.map(d=>d.date.slice(5));
