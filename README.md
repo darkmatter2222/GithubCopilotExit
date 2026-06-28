@@ -8,11 +8,11 @@
 [![Model](https://img.shields.io/badge/Model-Qwen3.6--27B-purple)](https://ollama.com/library/qwen3.6)
 [![Python](https://img.shields.io/badge/Python-3.12-blue)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/Framework-FastAPI-green)](https://fastapi.tiangolo.com/)
-[![GPU](https://img.shields.io/badge/GPU-RTX--5090-black)](#)
+[![GPU](https://img.shields.io/badge/GPU-DGX--Spark-black)](#)
 [![Context](https://img.shields.io/badge/Context--128K%20tokens-blue)](#)
 [![Ollama](https://img.shields.io/badge/Runtime-Ollama-orange)](https://ollama.com/)
 
-> **Private AI coding assistant**, running entirely on your own hardware. Same VS Code experience, zero API costs, complete privacy — no data ever leaves your machine.
+> **Private AI coding assistant**, running entirely on your own hardware. Same VS Code experience, zero API costs, complete privacy — no data ever leaves your machine. This repository is designed for developers with GPUs that have 32GB+ VRAM, providing access to large language models like Qwen3 and Qwen3-Coder with extensive context windows and tool calling capabilities in a local environment.
 
 </div>
 
@@ -37,7 +37,31 @@ cd GithubCopilotExit
 .\scripts\start-proxy-local.ps1
 ```
 
-Then open VS Code, fire up Copilot Chat, and select **Qwen3.6-27B (RTX 5090)**. You're live. 🎯
+Then open VS Code, fire up Copilot Chat, and select **Qwen3.6-27B (DGX Spark)**. You're live. 🎯
+
+### Who Is This For?
+
+This repository is designed for developers who have high-end GPUs with 32GB+ VRAM, including:
+- **NVIDIA RTX 5090** (32 GB VRAM) - Provides excellent performance
+- **NVIDIA DGX Spark (GB10)** - The target platform for this configuration (122 GB unified memory)
+- **NVIDIA RTX 4090 / 3090** (24 GB VRAM) - Partial support with limited context
+
+The repository works best with models that require substantial VRAM and provide maximum context windows. While we've optimized primarily for the DGX Spark platform, all setups maintain full compatibility with other NVIDIA GPUs.
+
+![RTX 5090 Hardware](images/rtx_5090.jpg)
+
+## 🎯 System Architecture Overview
+
+This repository is built with:
+- A **dynamic FastAPI proxy** that auto-discovers models from Ollama
+- Support for **containerized deployment** 
+- A full **analytics dashboard** for token tracking and performance monitoring
+- Integration with **MongoDB** (separate from the DGX Spark) for persistent analytics
+- Compatible with both **GitHub Copilot CLI** and **VS Code Copilot**
+
+![DGX Spark Hardware](images/dgx_spark.jpg)
+
+> The MongoDB database is currently hosted on a remote server (192.168.86.48). You can easily move it to your own machine or container if desired.
 
 ---
 
@@ -98,10 +122,10 @@ Then open VS Code, fire up Copilot Chat, and select **Qwen3.6-27B (RTX 5090)**. 
 The `qwen3` alias configures a **262K context window** (`num_ctx = 262144`), but your *usable* context is determined by available VRAM after loading the model weights:
 
 ```
-VRAM Budget (RTX 5090, 32 GB total):
+VRAM Budget (DGX Spark, 122 GB total):
 ├── Model weights (Q4_K_M quant)   ~18 GB
 ├── OS overhead + drivers           ~1-2 GB
-├── Available for KV cache          ~12 GB
+├── Available for KV cache          ~100 GB
 └── Usable context                  ~128K-131K tokens
 ```
 
@@ -111,6 +135,7 @@ VRAM Budget (RTX 5090, 32 GB total):
 
 | GPU | Total VRAM | Model Weights (Q4) | Remaining for KV Cache | Usable Context | Verdict |
 | --- | ---------- | ------------------ | ---------------------- | -------------- | ------- |
+| **DGX Spark** | 122 GB | ~18 GB | ~100 GB | **~128K tokens** | ✅ Excellent — full experience |
 | **RTX 5090** | 32 GB | ~18 GB | ~12 GB | **~128K tokens** | ✅ Excellent — full experience |
 | **RTX 4090 / 3090** | 24 GB | ~18 GB | ~4 GB | **~32K tokens** | ⚠️ Works but limited context — see below |
 | **< 20 GB VRAM** | -- | Model won't fit | N/A | Won't run | ❌ Not viable for this model |
@@ -127,7 +152,7 @@ VRAM Budget (RTX 5090, 32 GB total):
 | ----------- | ------- | ----- |
 | Windows | 10/11 | PowerShell 5.1+ included |
 | Python | 3.12 | Script auto-creates `.venv` for you |
-| GPU | RTX 4090 / 5090+ | **32 GB VRAM recommended** (Q4 weights = ~18GB, KV cache needs headroom) |
+| GPU | RTX 4090 / 5090+ / DGX Spark | **32 GB VRAM recommended** (Q4 weights = ~18GB, KV cache needs headroom) |
 | Disk Space | ~18 GB free | Model download, one-time only |
 | VS Code | Latest release | With GitHub Copilot extension installed |
 
@@ -314,9 +339,27 @@ GithubCopilotExit/
 │   ├── start-proxy-local.ps1 # EVERY SESSION: starts the proxy server
 │   ├── test-proxy.py        # Smoke tests: health check + sample inference
 │   └── warmup.py            # Pre-loads model into VRAM for faster cold starts
+├── copilot-dgx.bat          # Enhanced launcher for GitHub Copilot CLI with DGX Spark optimization
 ├── AGENTS.md                # Stack reference doc for AI coding agents
 └── README.md                # ← You are here
 ```
+
+---
+
+## 🚀 Using With GitHub Copilot CLI
+
+We've included a specialized batch file `copilot-dgx.bat` to make using this system with the GitHub Copilot CLI easier:
+
+```batch
+REM Usage: copilot-dgx.bat
+REM This launcher:
+REM - Sets up proper environment variables for DGX Spark
+REM - Provides model selection (Qwen3.6-27B, Qwen3-Coder 27B, OBLITERATED)
+REM - Configures optimized settings for DGX Spark performance
+REM - Enables all GitHub MCP tools and experimental features
+```
+
+This script provides a more convenient way to launch the Copilot CLI with optimized settings for your DGX Spark setup.
 
 ---
 
