@@ -454,6 +454,26 @@ async def models_running():
     return {"data": await router.get_ollama_running()}
 
 
+@app.get("/api/models/enriched")
+async def enriched_models():
+    """Return models with full metadata (architecture, params, capabilities, etc.)."""
+    models = await router.get_enriched_models()
+    running_data = await router.get_ollama_running()
+    running_names = {m.get("name", "") for m in running_data}
+    # Mark which models are in VRAM
+    for m in models:
+        mid = m["id"]
+        base_name = mid.split(":")[0]
+        m["is_loaded"] = mid in running_names or base_name in running_names
+    return {"data": models, "last_refresh": router.last_refresh_ts}
+
+
+@app.post("/api/models/check-updates")
+async def check_model_updates():
+    """Compare local model digests against ollama.com global registry."""
+    return await router.check_updates()
+
+
 # ── Live stats ────────────────────────────────────────────────────────────────
 
 @app.get("/stats")
