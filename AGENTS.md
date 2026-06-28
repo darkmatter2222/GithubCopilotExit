@@ -76,13 +76,18 @@ Host dgxspark
     ServerAliveInterval 60
 ```
 
-### Performance Benchmarks
-```
-Prompt processing : ~219 TPS
-Token generation  : ~40 TPS
-GPU               : CUDA0, all 66/66 layers offloaded
-Blackwell FP4     : native support enabled (BLACKWELL_NATIVE_FP4=1)
-```
+### GPU-Specific Performance Benchmarks
+
+| Model | Prompt Processing (TPS) | Token Generation (TPS) | Layers Offloaded | Notes |
+|---|---|---|---|---|
+| qwen3 / obliterated / qwen3.6 MTP (27B dense, Q4) | ~219 | ~40 | 66/66 | Baseline — warm cache on GB10 |
+| qwen3-coder (30.5B MoE, Q4) | ~190 | ~35 | 64/64 | Slightly slower due to MoE routing overhead |
+| **qwen3-coder-next **(80B MoE, Q8) | **~150** | **~25** | 48/48 | Larger model, higher precision — first call after load: ~8s TTFT |
+
+- **GPU**: CUDA0, all layers offloaded regardless of model (122 GB handles everything)
+- **Blackwell FP4**: native support enabled (`BLACKWELL_NATIVE_FP4=1`)
+- **TTFT** = Time to First Token — increases with quantization level and model size
+- Models stay cached in VRAM for ~5 min idle before eviction; next switch triggers reload
 
 ---
 
@@ -101,9 +106,18 @@ Blackwell FP4     : native support enabled (BLACKWELL_NATIVE_FP4=1)
 
 ## Managing Models (Dynamic — No Code Changes Needed)
 
+**CRITICAL RULE:** Never modify proxy code to add/remove models. The backend router auto-discovers all Ollama models every 30 seconds. Adding a model is as simple as pulling it onto the DGX Spark.
+
 ### List all downloaded models
 ```bash
 ssh dgxspark ollama list
+```
+
+### Check what is loaded in VRAM right now (only one model at a time)
+```bash
+ssh dgxspark ollama ps
+# Or via proxy API:
+curl http://192.168.86.39:8001/api/models/running
 ```
 
 ### Download a new model (auto-available to proxy within 30s)
@@ -120,20 +134,37 @@ Ollama loads it into VRAM automatically on the first completion request.
 ssh dgxspark "ollama rm <model-name>"
 ```
 
-### Check what is loaded in VRAM right now
+### Check disk space before downloading large models
 ```bash
-ssh dgxspark ollama ps
-# Or via proxy API:
-curl http://192.168.86.39:8001/api/models/running
+ssh dgxspark "df -h /"  # Need ~85 GB free for qwen3-coder-next:q8_0
 ```
 
-### Currently available models on DGX Spark
-```
-qwen3:latest                       17 GB  (default general-purpose)
-qwen3.6:27b-mtp-q4_K_M            17 GB  (MTP variant)
-qwen3-coder:latest                 18 GB  (coding specialist)
-obliterated:latest                 16 GB  (uncensored finetune)
-```
+### Currently Available Models on DGX Spark
+
+| bat Option | Ollama Alias (COPILOT_MODEL) | Name on DGX | Size | Params | Arch | Release | SWE-bench | HumanEval | Context | Est. TPS (GB10) | TTFT | Notes |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | `qwen3` | qwen3:latest | 17 GB | 27.3B | Dense Q4_K_M | Apr 29, 2025 | ~49% (35B-A3B sibling) | ~88% (Qwen3 family) | 131K | ~40 gen / ~219 prompt | ~3s | General purpose, dual-mode thinking |
+| _(hidden)_ | `qwen3.6:27b-mtp-q4_K_M` | qwen3.6:27b-mtp-q4_K_M | 17 GB | 27.3B | Dense Q4_K_M + MTP | Apr 29, 2025 | ~73% (35B-A3B sibling) | ~88% | N/A | Similar to qwen3 | Similar | MTP variant — parent of `qwen3` alias |
+| 2 | `qwen3-coder` | qwen3-coder:latest | 18 GB | 30.5B | MoE Q4_K_M | Jul 2025 | ~45% (30B-A3B) | SOTA for size class | 131K | ~35 gen / ~190 prompt | ~4s | Coding specialist, agentic tool calling |
+| 3 | `qwen3-coder-next:q8_0` | qwen3-coder-next:q8_0 | 84 GB | 80B (3B active) | MoE Q8_0 | Feb 2026 | **~74%** (SOTA open) | ~94% (Qwen3-Coder family) | 131K | ~25 gen / ~150 prompt | ~8s | **Flagship** — best agentic coder, 512 experts |
+| 4 | `obliterated` | obliterated:latest | 16 GB | 26.9B | Dense Q4_K_M | Apr 2026 (finetune) | ~73% (base Qwen3.6-27B OBLITERATED) | ~88% (same as base) | 131K | ~40 gen / ~219 prompt | ~3s | Uncensored finetune, refusal circuits removed |
+| _(parent)_ | `hf.co/OBLITERATUS/Qwen3.6-27B-OBLITERATED:Q4_K_M` | Same as obliterated | 16 GB | 26.9B | Dense Q4_K_M | Apr 2026 (finetune) | Same | Same | 131K | Same | Same | Parent model — `obliterated` alias wraps this |
+
+**Notes:**
+- **TTFT** = Time to First Token (estimated on GB10 with warm cache; first call after load adds ~5-30s)
+- **TPS** = Tokens Per Second (GB10: 122 GB unified LPDDR5x, native FP4 Blackwell support)
+- SWE-bench % shows Verified split for open models; Qwen3-Coder-Next leads all open models
+- Only one model can be loaded in VRAM at a time — Ollama auto-evicts on model swap
+- Total storage: ~168 GB across all 5 unique models (qwen3 and qwen3.6 MTP share some blobs)
+
+### Model Loading Behavior
+When you switch models (e.g., from `qwen3` to `qwen3-coder-next:q8_0`):
+1. The proxy routes the completion request to Ollama
+2. Ollama detects the model is not in VRAM and begins loading
+3. First response has a **cold start delay** (5-30s depending on model size)
+4. Subsequent requests hit **hot cache** — full speed
+5. Model stays in VRAM for ~5 min of idle time before eviction
+6. This process is transparent to VS Code Copilot CLI — no reconnect needed
 
 ### Switch the active model in VS Code Copilot
 1. Edit `chatLanguageModels.json` (`%APPDATA%\Code\User\chatLanguageModels.json`)
@@ -156,6 +187,45 @@ EOF
 ollama create mymodel -f ~/Modelfile-custom
 # Proxy discovers "mymodel" within 30 seconds automatically
 ```
+
+### End-to-End Model Addition Workflow (Agent Automation Script)
+
+This is the complete workflow an agent follows to research, download, verify, and integrate a new model:
+
+```bash
+# STEP 1: Research - check Ollama library for model availability
+ollama search <model-name>
+# Or check via web before proceeding
+
+# STEP 2: Download to DGX Spark (auto-discovered by proxy within 30s)
+ssh dgxspark "ollama pull MODEL_NAME:QUANTIZATION"
+# Example: ssh dgxspark "ollama pull phi4:q4_K_M"
+
+# STEP 3: Verify download completed
+ssh dgxspark "ollama list | grep MODEL_NAME"
+
+# STEP 4: Verify proxy discovered it
+curl -s http://192.168.86.39:8001/v1/models | jq '.data[].id'
+
+# STEP 5: Quick smoke test via proxy
+curl -s http://192.168.86.39:8001/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"MODEL_NAME","messages":[{"role":"user","content":"What is 2+2? One word."}],"max_tokens":10}'
+
+# STEP 6: Add to copilot-dgx.bat if desired (add new option + label)
+# Edit the .bat file with a new menu entry and COPILOT_MODEL variable
+
+# STEP 7: Clean up old models if disk space is a concern
+ssh dgxspark "ollama rm old-model-name"
+```
+
+**Rules for adding models:**
+1. **Never change proxy code** — it auto-discovers all Ollama models every 30 seconds
+2. Check available disk on DGX before pulling large models: `ssh dgxspark "df -h /"`
+3. The GB10 has 122 GB unified memory — Q8 quantization needs ~85 GB, leave headroom
+4. Only one model loads into VRAM at a time — Ollama manages eviction automatically
+5. After pulling, update `copilot-dgx.bat` to expose the new option in the menu
+6. Update this AGENTS.md table with benchmark data from research
 
 ---
 
