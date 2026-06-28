@@ -2,19 +2,26 @@
 #  Standalone Dashboard Container — lightweight HTTP server
 #
 #  Serves dashboard/index.html on a separate host from the proxy.
-#  PROXY_URL env var is injected into index.html at startup so
-#  that the JS fetch calls (pFetch) reach back to the DGX Spark
-#  proxy rather than localhost.
+#  Injects two env-driven values into index.html at runtime:
+#    PROXY_URL          — for browser pFetch() to reach proxy directly (same-host)
+#    PROXY_PATH_PREFIX  — path prefix for browser fetches when behind nginx ingress
+#                         (e.g. "/copilot" → /copilot/stats, /copilot/v1/models)
+#    PROXY_BACKEND      — server-side upstream target for serve.py to proxy API calls
+#                         to DGX Spark (use IP 192.168.86.39 — hostname not resolvable)
 #
 #  Build:
-#    docker build -t gcopilot-dashboard \
-#      --build-arg PROXY_URL=http://dgxspark:8001 \
-#      -f dashboard/Dockerfile .
+#    docker build -t gcopilot-dashboard -f dashboard/Dockerfile .
 #
-#  Or set at runtime (container re-reads on each request):
+#  Remote deployment behind nginx at /copilot/:
 #    docker run -d --name gcopilot-dashboard \
-#      --network host \
-#      -e PROXY_URL=http://dgxspark:8001 \
+#      --network docucraft_docucraft-network \
+#      -e PROXY_BACKEND=http://192.168.86.39:8001 \
+#      -e PROXY_PATH_PREFIX=/copilot \
+#      gcopilot-dashboard
+#
+#  Same-host deployment (DGX Spark, direct browser access):
+#    docker run -d --name gcopilot-dashboard \
+#      -e PROXY_URL=http://localhost:8001 \
 #      gcopilot-dashboard
 # ─────────════════════════════════════════════════════════════=
 FROM python:3.12-alpine
@@ -24,10 +31,8 @@ WORKDIR /srv
 COPY dashboard/serve.py .
 COPY dashboard/index.html .
 
-# Runtime injection: PROXY_URL points dashboard fetch() calls to the proxy host.
-# When empty (default), all fetches are same-origin (proxy runs on same host).
-# Set to e.g. "http://dgxspark:8001" when dashboard runs on a different server.
 ENV PROXY_URL=""
+ENV PROXY_PATH_PREFIX=""
 ENV DASHBOARD_PORT=3000
 ENV REFRESH_S=5
 

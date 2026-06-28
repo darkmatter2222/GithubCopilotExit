@@ -449,6 +449,16 @@ tr:hover td{background:rgba(255,255,255,.02)}
 const PROXY_URL = window.__PROXY_URL || "";
 
 /**
+ *  BASE_PATH — path prefix injected when the dashboard is served behind
+ *  a reverse proxy (e.g. nginx at /copilot/).  pFetch prepends this so
+ *  relative API calls reach the correct nginx location block even when
+ *  PROXY_URL is empty (server-side proxy mode).
+ *
+ *  Injected by serve.py before </head>.  Typical value: "/copilot".
+ */
+const BASE_PATH = window.__BASE_PATH || "";
+
+/**
  * pFetch — like fetch(), but prepends PROXY_URL so the dashboard can
  * talk to a proxy on a different host when deployed remotely.
  *
@@ -456,7 +466,7 @@ const PROXY_URL = window.__PROXY_URL || "";
  * When PROXY_URL is set, prepends it to every path.
  */
 function pFetch(path, opts) {
-  const target = PROXY_URL ? PROXY_URL + path : path;
+  const target = PROXY_URL ? PROXY_URL + path : BASE_PATH + path;
   return fetch(target, opts);
 }
 

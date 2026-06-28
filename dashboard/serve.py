@@ -19,6 +19,8 @@ Environment variables:
   HTML_PROXY_URL                                   — value injected into HTML for
     browser pFetch() calls. Default is "" (empty = same-origin). Set this to the
     direct proxy URL when dashboard runs on the same host as the proxy.
+  PROXY_PATH_PREFIX                                — path prefix injected into HTML
+    when behind nginx reverse-proxy (e.g. "/copilot" so browser fetches hit /copilot/stats)
   PROXY_PORT / DASHBOARD_PORT                      — listen port (default: 3000)
 
 NOTE: For nginx ingress deployment, PROXY_BACKEND points to upstream AND
@@ -47,6 +49,11 @@ TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), "index.html")
 
 # Paths that the dashboard JS pFetch() calls hit.
 API_PREFIXES = ("/stats", "/v1/", "/api/")
+
+# When deployed behind nginx at /copilot/, all browser fetch() paths need
+# the prefix prepended (e.g. /stats → /copilot/stats).  Set this env var
+# (e.g. PROXY_PATH_PREFIX=/copilot) or serve.py will autodetect via X-Forwarded-Prefix.
+PROXY_PATH_PREFIX = os.environ.get("PROXY_PATH_PREFIX", "")
 
 
 def _proxy_to_upstream(handler, path):
@@ -103,7 +110,9 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
 
         # Inject window.__PROXY_URL for browser pFetch() calls.
         # Default is empty → browser uses relative paths (serve.py proxies server-side).
-        injection = f'<script>window.__PROXY_URL="{HTML_PROXY_URL}";</script>'
+        # Also inject __BASE_PATH when behind nginx reverse-proxy prefix (e.g., /copilot/).
+        injection = (f'<script>window.__PROXY_URL="{HTML_PROXY_URL}";'
+                     f'window.__BASE_PATH="{PROXY_PATH_PREFIX}";</script>')
         if "</head>" in html:
             html = html.replace("</head>", injection + "\n</head>", 1)
 

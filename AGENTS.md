@@ -8,20 +8,50 @@
 ### Architecture
 
 ```
-VS Code Copilot Chat (chatLanguageModels.json)
-        |  http://192.168.86.39:8001
-        v
-FastAPI Proxy  (Docker container: gcopilot-proxy, --network host)
-        |  http://localhost:11434  (Ollama, host network)
-        v
-Ollama  (systemd service, Ubuntu 24.04 aarch64)
-        |  CUDA0 — 66/66 layers offloaded
-        v
-NVIDIA GB10  (122 GB unified LPDDR5x memory)
+┌───────────────────────────────────────────────────────────────────┐
+│  VS Code Copilot Chat / GitHub Copilot CLI                       │
+│  (chatLanguageModels.json → http://192.168.86.39:8001)           │
+└──────────────────────┬───────────────────────────────────────────┘
+                       │
+         ┌─────────────┼──────────────┐
+         ▼             ▼              ▼
+   ┌──────────┐  ┌──────────┐   ┌──────────────┐
+   │ DGX      │  │ Databrick│   │ External     │
+   │ Spark    │  │ (86.48)  │   │ Browser      │
+   │ (86.39)  │  │          │   │              │
+   ├──────────┤  ├──────────┤   └───────┬──────┘
+   │ gcopilot-│  │ susman-  │           │
+   │ proxy    │  │ ingress  │     HTTPS │
+   │ :8001    │  │ :443     │     ↓     │
+   ├──────────┤  └────┬─────┘  susmannet.duckdns.org
+   │ Ollama     │     │             /copilot/
+   │ (host net) │     ▼              │
+   │ :11434    │  gcopilot-          ▼
+   ├──────────┤  dashboard         serve.py
+   │ MongoDB  │  :3000             /copilot/stats
+   │ conn→48  │  ───────────────►  /copilot/v1/models
+   └──────────┘  PROXY_BACKEND=    /copilot/api/usage
+                 192.168.86.39:8001
 ```
 
 The proxy is **fully dynamic** — it discovers models from Ollama automatically every 30 seconds.
 No code changes are ever needed to add, remove, or swap models.
+
+### Remote Dashboard (Nginx Ingress)
+
+The LLM dashboard can be served remotely behind an nginx reverse proxy (e.g., `susman-ingress` on databrick at `192.168.86.48`) accessible via `https://susmannet.duckdns.org/copilot/`.
+
+**Data flow:** Browser → nginx (`/copilot/`) → serve.py (:3000) → DGX Spark proxy (:8001).
+- **PROXY_PATH_PREFIX=/copilot** — injected into HTML as `window.__BASE_PATH` so browser `pFetch()` calls hit the correct nginx location block (`/copilot/stats`, `/copilot/v1/models`, etc.)
+- **PROXY_BACKEND=http://192.168.86.39:8001** — serve.py server-side proxy target (use IP hostname `dgxspark` is not resolvable from the separate host).
+- Nginx upstream needs `resolver 127.0.0.11;` (Docker embedded DNS) to resolve container names on shared networks.
+
+### Data & MongoDB
+
+MongoDB (`radiacode@192.168.86.48:27017`) provides persistent analytics:
+- **/api/usage/daily** — Daily token/request totals (works immediately, reads from proxy in-memory + mongo)
+- **/api/history** — Request-level history (populates as requests flow through the proxy)
+- MongoDB connection is configured via `MONGO_URI` env var on gcopilot-proxy container.
 
 ---
 
@@ -129,6 +159,33 @@ ollama create mymodel -f ~/Modelfile-custom
 
 ---
 
+## Deploying the Dashboard
+
+### Remote dashboard behind nginx ingress (databrick)
+
+```bash
+# Build image on databrick
+ssh 192.168.86.48 "cd /tmp/dashboard-build && docker build -t gcopilot-dashboard ."
+
+# Restart with correct env vars
+docker stop gcopilot-dashboard && docker rm gcopilot-dashboard
+docker run -d --name gcopilot-dashboard \
+  --network docucraft_docucraft-network \
+  -e PROXY_BACKEND=http://192.168.86.39:8001 \
+  -e PROXY_PATH_PREFIX=/copilot \
+  -e DASHBOARD_PORT=3000 \
+  gcopilot-dashboard
+
+# Reload nginx (config must have "resolver 127.0.0.11;" for Docker DNS)
+docker exec susman-ingress nginx -s reload
+```
+
+### Direct deployment (same host as proxy, e.g., DGX Spark)
+
+Set `PROXY_URL=http://localhost:8001` and leave `PROXY_PATH_PREFIX` empty so browser fetches go directly.
+
+---
+
 ## Deploying the Proxy
 
 ### Full deploy (upload code + rebuild Docker image on DGX)
@@ -193,6 +250,9 @@ proxy/
   dashboard.html       Served at /dashboard (copy of dashboard/index.html)
 dashboard/
   index.html           Standalone dashboard — pure HTML/JS, reads proxy API
+                       (injects PROXY_URL + BASE_PATH via serve.py)
+  serve.py             Lightweight HTTP server with upstream proxy + env injection
+  Dockerfile           Alpine Python container for standalone deployment
 scripts/
   deploy.py            Full deploy to DGX Spark (build + restart)
   setup-local.ps1      One-time local .venv + dependency setup
@@ -214,6 +274,7 @@ AGENTS.md              This file
 | `ROUTER_REFRESH_S` | `30` | Seconds between backend re-discovery polls |
 | `MONGO_URI` | _(empty)_ | MongoDB connection string (optional) |
 | `MONGO_DB` | `radiacode` | MongoDB database name |
+| `PROXY_PATH_PREFIX` | _(empty)_ | Path prefix injected into dashboard HTML for nginx reverse-proxy (e.g. `/copilot`) |
 
 ---
 
