@@ -18,6 +18,45 @@
 
 ---
 
+## 🎯 System Architecture Overview 
+
+This repository is built with:
+- A **dynamic FastAPI proxy** that auto-discovers models from Ollama
+- Support for **containerized deployment** 
+- A full **analytics dashboard** for token tracking and performance monitoring
+- Integration with **MongoDB** (separate from the DGX Spark) for persistent analytics
+- Compatible with both **GitHub Copilot CLI** and **VS Code Copilot**
+
+![GitHub Copilot CLI Dashboard](images/screen_shot_of_dashboard_and_github_copilot_cli.jpg)
+
+> The MongoDB database is currently hosted on a remote server (192.168.86.48). You can easily move it to your own machine or container if desired.
+
+## 📦 Detailed Setup Guide
+
+### Prerequisites
+
+| Requirement | Version | Notes |
+| ----------- | ------- | ----- |
+| Windows | 10/11 | PowerShell 5.1+ included |
+| Python | 3.12 | Script auto-creates `.venv` for you |
+| GPU | RTX 4090 / 5090 / DGX Spark | **32 GB VRAM recommended** (Q4 weights = ~18GB, KV cache needs headroom) |
+| Disk Space | ~18 GB free | Model download, one-time only |
+| VS Code | Latest release | With GitHub Copilot extension installed |
+
+### Step 1 — Clone and Run Setup
+
+```powershell
+git clone https://github.com/darkmatter2222/GithubCopilotExit.git
+cd GithubCopilotExit
+.\scripts\setup-local.ps1
+```
+
+This will:
+- Create a `.venv` virtual environment and install Python dependencies (FastAPI, Uvicorn, httpx)
+- Verify Ollama is installed and reachable at `localhost:11434`
+- Pull `qwen3.6:27b-mtp-q4_K_M` (~18 GB, one-time download only)
+- Create the **`qwen3` alias with large context window** (`num_ctx = 262144`) — actual usable context depends on your GPU VRAM (see above)
+
 ## ⚡ Quick Start
 
 ```
