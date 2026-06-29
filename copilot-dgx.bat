@@ -4,7 +4,8 @@ setlocal EnableExtensions EnableDelayedExpansion
 REM ============================================================
 REM GitHub Copilot CLI DGX Spark launcher
 REM Maximum-autonomy local model launcher
-REM Voice input is enabled inside the session with /voice
+REM The proxy auto-discovers all models from Ollama every 30s - no code changes needed to add/remove models. Add new ones via: ssh dgxspark "ollama pull <model>"
+REM Models can also be swapped by changing COPILOT_MODEL env var directly without this script
 REM IMPORTANT: Do NOT name this file copilot.bat
 REM Recommended name: copilot-dgx.bat
 REM ============================================================
@@ -38,27 +39,34 @@ if "%REAL_COPILOT%"=="" (
 echo.
 echo Select GitHub Copilot CLI model:
 echo.
-echo   1. Qwen3.6-27B
-echo   2. Qwen3-Coder 27B
-echo   3. Qwen3.6-27B OBLITERATED
-echo   4. Exit
+echo   1. Qwen3 (General purpose, 17 GB)
+echo   2. Qwen3-Coder 27B (Coding specialist)
+echo   3. Qwen3-Coder-Next Q8 (Flagship MoE coder, 85 GB)
+echo   4. Qwen3.6-27B OBLITERATED (Uncensored finetune)
+echo   5. Exit
 echo.
 
-choice /C 1234 /N /M "Choose a model [1-4]: "
+choice /C 12345 /N /M "Choose a model [1-5]: "
 
-if errorlevel 4 goto exit
-if errorlevel 3 goto obliterated
+if errorlevel 5 goto exit
+if errorlevel 4 goto obliterated
+if errorlevel 3 goto qwen3codernext
 if errorlevel 2 goto qwen3coder
 if errorlevel 1 goto qwen3
 
 :qwen3
 set COPILOT_MODEL=qwen3
-set MODEL_DISPLAY_NAME=Qwen3.6-27B
+set MODEL_DISPLAY_NAME=Qwen3 (General Purpose)
 goto launch
 
 :qwen3coder
 set COPILOT_MODEL=qwen3-coder
 set MODEL_DISPLAY_NAME=Qwen3-Coder 27B
+goto launch
+
+:qwen3codernext
+set COPILOT_MODEL=qwen3-coder-next:q8_0
+set MODEL_DISPLAY_NAME=Qwen3-Coder-Next Q8 (Flagship MoE)
 goto launch
 
 :obliterated
@@ -92,6 +100,12 @@ echo   /remote on    Ensure remote mobile control is enabled
 echo   /env          Show loaded tools, MCP servers, skills, hooks
 echo   /mcp show     Show configured MCP servers
 echo   /yolo         Re-enable allow-all permissions
+echo.
+echo To add new models (no proxy code changes needed):
+echo   ssh dgxspark "ollama pull ModelName"
+echo   Then restart this script - model auto-discovers within 30s.
+echo   Current model pool hosted on DGX Spark:
+echo     qwen3, qwen3.6 MTP, qwen3-coder, qwen3-coder-next:q8_0, obliterated
 echo.
 echo Voice usage after /voice is enabled:
 echo   Hold Spacebar to talk, release to insert transcription.

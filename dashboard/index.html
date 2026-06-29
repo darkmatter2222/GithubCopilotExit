@@ -117,17 +117,45 @@ tr:hover td{background:rgba(255,255,255,.02)}
 .vram-bar{height:100%;background:var(--blue);transition:width .4s}
 .vram-gb{font-size:.63rem;color:var(--teal);font-family:var(--mono);white-space:nowrap;min-width:42px;text-align:right}
 
-/* ── MODEL CARDS ── */
-.mc{background:var(--card2);border:1px solid var(--border);border-radius:2px;padding:9px 11px}
-.mc.loaded{border-color:rgba(118,185,0,.4)}
-.mc-name{font-size:.78rem;font-weight:700;margin-bottom:4px}
-.mc-tags{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:4px}
-.tag{font-size:.59rem;padding:1px 6px;border-radius:2px;font-weight:700;letter-spacing:.03em}
-.tag-ollama{background:rgba(0,163,224,.12);color:var(--blue)}
-.tag-vllm{background:rgba(155,89,182,.12);color:var(--purple)}
-.tag-loaded{background:rgba(118,185,0,.12);color:var(--nv)}
-.tag-gray{background:#1c1c1c;color:var(--sub)}
-.mc-id{font-size:.62rem;color:var(--sub);font-family:var(--mono);margin-top:3px}
+/* ── MODELS TABLE ── */
+.models-table-wrap{overflow-x:auto;margin-bottom:10px;border:1px solid var(--border);border-radius:3px}
+.models-table{width:100%;border-collapse:collapse;font-size:.64rem;font-family:var(--mono)}
+.models-table thead th{position:sticky;top:0;background:#151515;padding:6px 8px;text-align:left;border-bottom:2px solid var(--nv);cursor:pointer;user-select:none;color:var(--sub);text-transform:uppercase;letter-spacing:.06em;font-weight:700;font-size:.58rem}
+.models-table thead th:hover{color:var(--nv)}
+.models-table thead th .sort-arrow{margin-left:3px;font-size:.5rem;opacity:.6}
+.models-table thead th.sorted .sort-arrow{opacity:1;color:var(--nv)}
+.models-table tbody tr{border-bottom:1px solid #1a1a1a;transition:background .1s}
+.models-table tbody tr:hover{background:#1a1a1a}
+.models-table tbody tr.in-vram{border-left:3px solid var(--nv);background:rgba(118,185,0,.03)}
+.models-table td{padding:5px 8px;vertical-align:middle}
+.models-row-expand{cursor:pointer;width:20px;text-align:center;color:var(--sub);font-size:.7rem}
+.models-row-expand:hover{color:var(--text)}
+.models-detail-row{background:#111;display:none}
+.models-detail-row.show{display:table-row}
+.models-detail-cell{padding:8px 12px !important;background:#0c0c0c}
+.models-detail-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:6px;font-size:.62rem}
+.models-detail-grid .md-label{color:var(--sub);text-transform:uppercase;letter-spacing:.04em;font-size:.56rem;font-weight:600}
+.models-detail-grid .md-value{font-family:var(--mono);color:var(--text)}
+.models-name-cell{min-width:220px}
+.models-name-main{font-weight:700;color:var(--text);font-size:.66rem}
+.models-name-sub{font-size:.54rem;color:var(--sub);margin-top:1px}
+.models-badge-inline{display:inline-block;padding:1px 4px;border-radius:2px;font-size:.52rem;font-weight:700;margin-left:4px;vertical-align:middle}
+.alias-tag{background:rgba(0,163,224,.1);color:var(--teal)}
+.base-tag{background:rgba(255,193,7,.08);color:var(--yellow)}
+.vram-dot{color:var(--nv);font-size:.7rem}
+.num-cell{text-align:right;font-family:var(--mono)}
+.update-ok{color:var(--nv)}
+.update-avail{color:var(--yellow);font-weight:700;cursor:pointer}
+.update-custom{color:var(--sub)}
+.models-info-link{color:var(--teal);text-decoration:none;cursor:pointer;font-size:.6rem;margin-left:4px}
+.models-info-link:hover{color:var(--blue);text-decoration:underline}
+
+/* ── FILTER/SORT BAR ── */
+.mfbar{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;align-items:center}
+.mfbar select{background:#1a1a1a;color:var(--text);border:1px solid var(--border);border-radius:2px;padding:2px 6px;font-size:.62rem;font-family:var(--mono)}
+.mfbar button{padding:2px 8px;border-radius:2px;font-size:.6rem;font-weight:700;cursor:pointer;background:#1c1c1c;color:var(--sub);border:1px solid var(--border)}
+.mfbar button:hover{color:var(--text);border-color:#444}
+.mfbar button.active{background:var(--nv);color:#000;border-color:var(--nv)}
 
 /* ── PILLS ── */
 .pill-group{display:flex;gap:2px}
@@ -326,16 +354,50 @@ tr:hover td{background:rgba(255,255,255,.02)}
 <!-- ══════════ MODELS ══════════ -->
 <div class="page" id="page-models">
   <div class="shdr" style="margin-top:10px">
-    <h2>Available Models</h2>
-    <button class="pill active" onclick="loadModels()">↻ Refresh</button>
+    <h2>Models Catalog</h2>
+    <span style="display:flex;gap:4px">
+      <button class="pill active" onclick="loadModels()">↻ Refresh</button>
+      <button class="pill" id="mk-check-btn" onclick="checkModelUpdates()">⟳ Check Updates</button>
+    </span>
   </div>
-  <div class="kpi-row" style="flex-wrap:wrap;margin-bottom:12px">
-    <div class="kpi bl" style="min-width:110px"><div class="kpi-label">Total</div><div class="kpi-val" id="mk-total">—</div></div>
-    <div class="kpi nv" style="min-width:110px"><div class="kpi-label">In VRAM</div><div class="kpi-val" id="mk-running">—</div></div>
-    <div class="kpi bl" style="min-width:110px"><div class="kpi-label">Ollama</div><div class="kpi-val" id="mk-ollama">—</div></div>
-    <div class="kpi pu" style="min-width:110px"><div class="kpi-label">vLLM</div><div class="kpi-val" id="mk-vllm">—</div></div>
+
+  <div class="kpi-row" style="flex-wrap:wrap;margin-bottom:10px">
+    <div class="kpi bl" style="min-width:95px"><div class="kpi-label">Total</div><div class="kpi-val" id="mk-total">—</div></div>
+    <div class="kpi nv" style="min-width:95px"><div class="kpi-label">In VRAM</div><div class="kpi-val" id="mk-running">—</div></div>
+    <div class="kpi bl" style="min-width:95px"><div class="kpi-label">Ollama</div><div class="kpi-val" id="mk-ollama">—</div></div>
+    <div class="kpi pu" style="min-width:95px"><div class="kpi-label">vLLM</div><div class="kpi-val" id="mk-vllm">—</div></div>
+    <div class="kpi tl" style="min-width:100px"><div class="kpi-label">Disk Used</div><div class="kpi-val" id="mk-disk" style="font-size:.82rem">—</div></div>
+    <div class="kpi yw" style="min-width:95px"><div class="kpi-label">MoE</div><div class="kpi-val" id="mk-moe">—</div></div>
+    <div class="kpi nv" style="min-width:95px"><div class="kpi-label">Dense</div><div class="kpi-val" id="mk-dense">—</div></div>
   </div>
-  <div class="g3" id="models-grid"></div>
+
+  <div class="mfbar">
+    <button id="f-ollama" class="active" onclick="toggleFilter(this,'ollama')">Ollama</button>
+    <button id="f-vllm" onclick="toggleFilter(this,'vllm')">vLLM</button>
+    <button id="f-moe" class="active" onclick="toggleFilter(this,'moe')">MoE</button>
+    <button id="f-dense" class="active" onclick="toggleFilter(this,'dense')">Dense</button>
+    <button id="f-base-only" onclick="toggleFilter(this,'baseOnly')">Hide Alias Duplicates</button>
+    <span id="mk-checking" class="models-checking">⟳ checking registry…</span>
+  </div>
+
+  <div class="models-table-wrap">
+    <table class="models-table" id="modelsTable">
+      <thead>
+        <tr>
+          <th style="width:20px"></th>
+          <th class="sorted" data-sort="name" onclick="onSortChange('name')">Name <span class="sort-arrow">▲</span></th>
+          <th data-sort="params" class="num-cell" onclick="onSortChange('params')">Params <span class="sort-arrow">▲</span></th>
+          <th data-sort="size" class="num-cell" onclick="onSortChange('size')">Size (GB) <span class="sort-arrow">▲</span></th>
+          <th data-sort="ctx" class="num-cell" onclick="onSortChange('ctx')">Context <span class="sort-arrow">▲</span></th>
+          <th data-sort="quant" onclick="onSortChange('quant')">Quant <span class="sort-arrow">▲</span></th>
+          <th data-sort="arch" onclick="onSortChange('arch')">Arch <span class="sort-arrow">▲</span></th>
+          <th data-sort="update" onclick="onSortChange('update')">Update <span class="sort-arrow">▲</span></th>
+        </tr>
+      </thead>
+      <tbody id="modelsTbody"></tbody>
+    </table>
+  </div>
+
   <div id="models-empty" style="display:none;text-align:center;padding:40px;color:var(--sub);font-size:.76rem;text-transform:uppercase;letter-spacing:.08em">No models discovered — check Ollama is running</div>
 </div>
 
@@ -440,9 +502,45 @@ tr:hover td{background:rgba(255,255,255,.02)}
 <script>
 'use strict';
 
-// ── Base path support (nginx reverse proxy) ───────────────────────────────
-// serve.py injects window.__BASE_PATH = "/copilot" (or "" when running standalone)
-const __bp = typeof window.__BASE_PATH !== 'undefined' ? window.__BASE_PATH : '';
+// ════════════════════════════════════════════════════════════════════════
+//  PROXY_URL — override for remote dashboard deployment.
+//
+//  When the dashboard runs on the same host as the proxy (default), leave
+//  this empty so all fetch() calls resolve to the same origin.
+//
+//  When the dashboard container is deployed on a separate server, set this
+//  to the full URL of the proxy — hostname preferred over IP:
+//
+//    const PROXY_URL = "http://dgxspark:8001";
+//
+//  This variable can also be injected at runtime by the dashboard HTTP
+//  server (see dashboard/serve.py). The server reads PROXY_URL from its
+//  environment and injects window.__PROXY_URL before </head> so this
+//  block picks it up automatically.
+// ════════════════════════════════════════════════════════════════════════
+const PROXY_URL = window.__PROXY_URL || "";
+
+/**
+ *  BASE_PATH — path prefix injected when the dashboard is served behind
+ *  a reverse proxy (e.g. nginx at /copilot/).  pFetch prepends this so
+ *  relative API calls reach the correct nginx location block even when
+ *  PROXY_URL is empty (server-side proxy mode).
+ *
+ *  Injected by serve.py before </head>.  Typical value: "/copilot".
+ */
+const BASE_PATH = window.__BASE_PATH || "";
+
+/**
+ * pFetch — like fetch(), but prepends PROXY_URL so the dashboard can
+ * talk to a proxy on a different host when deployed remotely.
+ *
+ * When PROXY_URL is empty (default), resolves exactly like fetch().
+ * When PROXY_URL is set, prepends it to every path.
+ */
+function pFetch(path, opts) {
+  const target = PROXY_URL ? PROXY_URL + path : BASE_PATH + path;
+  return fetch(target, opts);
+}
 
 // ── Utilities ─────────────────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
@@ -763,7 +861,7 @@ function updateTpsChart(history, currentTps) {
 // ── VRAM models ───────────────────────────────────────────────────────────
 async function updateVramModels() {
   try {
-    const data = await fetch(__bp + '/api/models/running').then(r=>r.json());
+    const data = await pFetch('/api/models/running').then(r=>r.json());
     const models = data.data||[];
     $('vram-count').textContent = `${models.length} loaded`;
     const el = $('vram-models');
@@ -820,7 +918,7 @@ function renderLog() {
 // ── DB check ──────────────────────────────────────────────────────────────
 async function checkDb() {
   try {
-    const r = await fetch(__bp + '/api/stats/summary?days=1');
+    const r = await pFetch('/api/stats/summary?days=1');
     const d = await r.json();
     const ok = r.ok && d.total_requests !== undefined;
     $('db-status').textContent = ok ? 'DB ✓' : 'DB ✗';
@@ -833,7 +931,7 @@ let _vramCtr=0;
 async function refreshLive() {
   const dot=$('rdot'); if(dot) dot.classList.add('on');
   try {
-    const d = await fetch(__bp + '/stats').then(r=>r.json());
+    const d = await pFetch('/stats').then(r=>r.json());
     $('kpi-tps').textContent   = (d.combined_tps||0).toFixed(1);
     $('kpi-up').textContent    = fUp(d.session_uptime_s);
     $('kpi-reqs').textContent  = nf(d.total_requests);
@@ -885,40 +983,198 @@ async function refreshLive() {
   finally { if(dot) dot.classList.remove('on'); }
 }
 
-// ── Models page ───────────────────────────────────────────────────────────
-async function loadModels() {
-  const grid=$('models-grid'), empty=$('models-empty');
-  grid.innerHTML='<div style="color:var(--sub);padding:16px;font-size:.74rem">Loading…</div>';
-  empty.style.display='none';
+// ── Models table ────────────────────────────────────────────────────────────
+let _modelUpdateState = {};
+let _activeFilters = new Set(['ollama','vllm','moe','dense']);
+let _hideBaseCopies = false;
+let _lastUpdateCheck = 0;
+const UPDATE_CHECK_MAX_AGE = 60 * 1000;
+let _sortCol = 'name', _sortDir = 1;
+
+function onSortChange(col) {
+  document.querySelectorAll('#modelsTable thead th').forEach(th => {
+    th.classList.remove('sorted');
+    const ar = th.querySelector('.sort-arrow');
+    if (ar) ar.textContent = '\u25b2';
+  });
+  const th = document.querySelector('[data-sort="'+col+'"]');
+  if (th) {
+    th.classList.add('sorted');
+    if (_sortCol === col) { _sortDir *= -1; }
+    else { _sortCol = col; _sortDir = 1; }
+    const ar = th.querySelector('.sort-arrow');
+    if (ar) ar.textContent = _sortDir===1?'\u25b2':'\u25bc';
+  }
+  loadModels();
+}
+
+function toggleFilter(btn, filter) {
+  if (filter === 'baseOnly') {
+    _hideBaseCopies = !_hideBaseCopies;
+    btn.classList.toggle('active', _hideBaseCopies);
+  } else {
+    if (_activeFilters.has(filter)) { _activeFilters.delete(filter); btn.classList.remove('active'); }
+    else { _activeFilters.add(filter); btn.classList.add('active'); }
+  }
+  loadModels();
+}
+
+function timeAgo(isoStr) {
+  if (!isoStr) return '\u2014';
+  const d = new Date(isoStr);
+  const diff = (Date.now() - d.getTime()) / 1000;
+  if (diff < 60) return 'just now';
+  if (diff < 3600) return Math.floor(diff/60)+'m ago';
+  if (diff < 86400) return Math.floor(diff/3600)+'h ago';
+  if (diff < 604800) return Math.floor(diff/86400)+'d ago';
+  return d.toLocaleDateString();
+}
+
+function formatParams(n) {
+  if (!n || n === '\u2014') return '\u2014';
+  const num = parseInt(String(n).replace(/[^\d]/g,''));
+  if (isNaN(num)) return String(n);
+  if (num >= 1e9) return (num/1e9).toFixed(1)+'B';
+  if (num >= 1e6) return (num/1e6).toFixed(0)+'M';
+  return num.toLocaleString();
+}
+
+function modelDisplayName(m) {
+  let id = m.id;
+  if (id.startsWith('hf.co/OBLITERATUS')) {
+    const family = (m.family||'').toLowerCase();
+    if (family.includes('qwen') && (m.parameter_count_exact||0) > 20e9) return 'Qwen3.6 27B Obliterated';
+    if (family.includes('qwen')) return 'Qwen3 Obliterated';
+  }
+  if (id === 'obliterated:latest') return 'Qwen3 Obliterated (alias)';
+  let name = id.replace(/:.+$/, '');
+  return name.replace(/-/g,' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function modelInfoUrl(m) {
+  if (m.id.startsWith('hf.co/')) return 'https://huggingface.co/'+m.id.replace(/^hf\.co\//,'').replace(/:.*/,'');
+  return 'https://ollama.com/library/'+m.id.split(':')[0];
+}
+
+function toggleRowExpand(tr) {
+  const detail = tr.nextElementSibling;
+  if (!detail || !detail.classList.contains('models-detail-row')) return;
+  const arrow = tr.querySelector('.models-row-expand');
+  if (detail.classList.toggle('show')) { if(arrow) arrow.textContent='\u25bc'; }
+  else { if(arrow) arrow.textContent='\u25b6'; }
+}
+
+function renderModelsTable(models) {
+  const tbody = $('modelsTbody');
+  if (!tbody) return;
+  let html = '';
+  models.forEach(m => {
+    const isMoE = (m.expert_count||0) > 0;
+    const arch = isMoE ? 'MoE' : 'Dense';
+    const ctxLen = m.context_length || 0;
+    const ctxStr = ctxLen >= 1024 ? (ctxLen/1024)+'K' : String(ctxLen||'\u2014');
+    const sizeGB = m.size_mb ? (m.size_mb / 1024).toFixed(2) : '\u2014';
+    const paramsStr = formatParams(m.parameter_count_exact || m.parameter_size);
+    let nameSub = '';
+    if (m.is_alias) {
+      nameSub = '<span class="models-badge-inline alias-tag">alias</span> \u2192 '+(m.parent_model||'?');
+    } else {
+      nameSub = '<span class="models-badge-inline base-tag">base</span>';
+    }
+    const vramDot = m.is_loaded ? '<span class="vram-dot" title="Loaded in VRAM">\u25cf</span> ' : '';
+    const upd = _modelUpdateState[m.id];
+    let updateHtml = '';
+    if (upd && upd.status === 'update_available') updateHtml = '<span class="update-avail" title="New version available">\u26a0 Update</span>';
+    else if (upd && upd.status === 'up_to_date') updateHtml = '<span class="update-ok">\u2713 Current</span>';
+    else if (upd && upd.status === 'unknown') updateHtml = '<span class="update-custom" title="Custom / private model">? Custom</span>';
+    else updateHtml = '<span class="update-custom">Not checked</span>';
+    const infoUrl = modelInfoUrl(m);
+    let dg = '';
+    dg += '<div><span class="md-label">Full ID</span><br><span class="md-value">'+m.id+'</span></div>';
+    if (m.parent_model) dg += '<div><span class="md-label">Parent</span><br><span class="md-value" style="color:var(--teal)">'+m.parent_model+'</span></div>';
+    dg += '<div><span class="md-label">Family</span><br><span class="md-value">'+((m.families||[]).join(', ') || m.family||'?')+'</span></div>';
+    dg += '<div><span class="md-label">Blocks</span><br><span class="md-value">'+(m.block_count||'\u2014')+'</span></div>';
+    if (isMoE) dg += '<div><span class="md-label">Experts</span><br><span class="md-value">'+m.expert_count+' total, '+(m.expert_used_count||'?')+' active</span></div>';
+    dg += '<div><span class="md-label">License</span><br><span class="md-value">'+(m.license_short||'Unknown')+'</span></div>';
+    dg += '<div><span class="md-label">Modified</span><br><span class="md-value">'+timeAgo(m.modified_at)+'</span></div>';
+    dg += '<div><span class="md-label">Digest</span><br><span class="md-value" style="font-size:.54rem">'+(m.digest||'\u2014')+'</span></div>';
+    dg += '<div><span class="md-label">Info</span><br><a href="'+infoUrl+'" target="_blank" class="models-info-link">Model Page \u2197</a></div>';
+    html += '<tr class="'+(m.is_loaded?'in-vram':'')+'" data-backend="'+m.backend+'" data-moe="'+isMoE+'">';
+    html += '<td class="models-row-expand" onclick="toggleRowExpand(this.closest(\'tr\'))">\u25b6</td>';
+    html += '<td class="models-name-cell"><span class="models-name-main">'+vramDot+modelDisplayName(m)+'</span><br><span class="models-name-sub">'+nameSub+'</span></td>';
+    html += '<td class="num-cell">'+paramsStr+'</td>';
+    html += '<td class="num-cell">'+sizeGB+'</td>';
+    html += '<td class="num-cell">'+ctxStr+'</td>';
+    html += '<td>'+(m.quantization_level||'\u2014')+'</td>';
+    html += '<td>'+arch+'</td>';
+    html += '<td>'+updateHtml+'</td>';
+    html += '</tr>';
+    html += '<tr class="models-detail-row"><td colspan="8" class="models-detail-cell"><div class="models-detail-grid">'+dg+'</div></td></tr>';
+  });
+  tbody.innerHTML = html;
+}
+
+async function silentUpdateCheck() {
   try {
-    const [mr, rr] = await Promise.all([
-      fetch(__bp + '/v1/models').then(r=>r.json()),
-      fetch(__bp + '/api/models/running').then(r=>r.json()).catch(()=>({data:[]}))
-    ]);
-    const models=mr.data||[], running=new Set((rr.data||[]).map(m=>m.name));
-    $('mk-total').textContent   = models.length;
-    $('mk-running').textContent = running.size;
-    $('mk-ollama').textContent  = models.filter(m=>m.backend==='ollama').length;
-    $('mk-vllm').textContent    = models.filter(m=>m.backend==='vllm').length;
-    if (!models.length) { grid.innerHTML=''; empty.style.display=''; return; }
-    grid.innerHTML = models.map(m => {
-      const loaded = running.has(m.id)||running.has(m.id+':latest');
-      const sizeStr = m.size_mb ? (m.size_mb/1024).toFixed(1)+' GB' : '';
-      return `<div class="mc${loaded?' loaded':''}">
-        <div class="mc-name">${m.display_name||m.id}</div>
-        <div class="mc-tags">
-          <span class="tag ${m.backend==='vllm'?'tag-vllm':'tag-ollama'}">${m.backend}</span>
-          ${loaded?'<span class="tag tag-loaded">● VRAM</span>':''}
-          ${sizeStr?`<span class="tag tag-gray">${sizeStr}</span>`:''}
-          ${m.context_length?`<span class="tag tag-gray">${(m.context_length/1024).toFixed(0)}K ctx</span>`:''}
-        </div>
-        <div class="mc-id">${m.id}</div>
-        <div style="font-size:.6rem;color:var(--sub);margin-top:4px;font-family:var(--mono)">
-          model: "<span style="color:var(--nv)">${m.id.split(':')[0]}</span>"
-        </div>
-      </div>`;
-    }).join('');
-  } catch(e) { grid.innerHTML=`<div style="color:var(--red);padding:16px">${e.message}</div>`; }
+    const r = await pFetch('/api/models/check-updates', { method: 'POST' }).then(r => r.json());
+    _modelUpdateState = (r.statuses || r);
+    _lastUpdateCheck = Date.now();
+  } catch(e) { console.warn('silent update check failed', e); }
+}
+
+async function loadModels() {
+  const tbody = $('modelsTbody');
+  const emptyEl = $('models-empty');
+  if (tbody) tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--sub);padding:16px;font-size:.7rem">Loading\u2026</td></tr>';
+  emptyEl.style.display = 'none';
+  if (Date.now() - _lastUpdateCheck > UPDATE_CHECK_MAX_AGE) { await silentUpdateCheck(); }
+  try {
+    const er = await pFetch('/api/models/enriched').then(r => r.json());
+    let models = er.data || [];
+    $('mk-total').textContent = models.length;
+    $('mk-running').textContent = models.filter(m => m.is_loaded).length;
+    $('mk-ollama').textContent = models.filter(m => m.backend === 'ollama').length;
+    $('mk-vllm').textContent = models.filter(m => m.backend === 'vllm').length;
+    const baseModels = models.filter(m => !m.is_alias);
+    const totalSizeMB = baseModels.reduce((s, m) => s + (m.size_mb || 0), 0);
+    $('mk-disk').textContent = (totalSizeMB / 1024).toFixed(1) + ' GB';
+    $('mk-moe').textContent = models.filter(m => (m.expert_count || 0) > 0).length;
+    $('mk-dense').textContent = models.filter(m => (m.expert_count || 0) === 0).length;
+    if (_activeFilters.size < 4) {
+      models = models.filter(m => {
+        const bOk = _activeFilters.has('ollama') && m.backend==='ollama' || _activeFilters.has('vllm') && m.backend==='vllm';
+        const isMoE2 = (m.expert_count||0) > 0;
+        const aOk = (isMoE2 && _activeFilters.has('moe')) || (!isMoE2 && _activeFilters.has('dense'));
+        return bOk && aOk;
+      });
+    }
+    if (_hideBaseCopies) {
+      const aliasDigests = new Set((er.data||[]).filter(a => a.is_alias&&a.digest).map(a => a.digest));
+      models = models.filter(m => !(m.id.startsWith('hf.co/') && aliasDigests.has(m.digest)));
+    }
+    const col = _sortCol, dir = _sortDir;
+    if (col === 'name') models.sort((a,b) => a.id.localeCompare(b.id)*dir);
+    else if (col === 'params') models.sort((a,b) => ((parseInt(String(a.parameter_count_exact||a.parameter_size).replace(/[^\d]/g,''))||0)-(parseInt(String(b.parameter_count_exact||b.parameter_size).replace(/[^\d]/g,''))||0))*dir);
+    else if (col === 'size') models.sort((a,b) => ((a.size_bytes||0)-(b.size_bytes||0))*dir);
+    else if (col === 'ctx') models.sort((a,b) => ((a.context_length||0)-(b.context_length||0))*dir);
+    else if (col === 'quant') models.sort((a,b) => (a.quantization_level||'').localeCompare(b.quantization_level||'')*dir);
+    else if (col === 'arch') { const toMoE = x=>(x.expert_count||0)>0?1:0; models.sort((a,b) => (toMoE(a)-toMoE(b))*dir); }
+    else if (col === 'update') { const pr={up_to_date:2,unknown:1,update_available:0}; models.sort((a,b)=>((pr[_modelUpdateState[a.id]?.status]??3)-(pr[_modelUpdateState[b.id]?.status]??3))*dir); }
+    if (!models.length) { tbody.innerHTML='';emptyEl.style.display='';emptyEl.textContent=_activeFilters.size<4?'No models match current filters':'No models discovered';return; }
+    renderModelsTable(models);
+  } catch(e) { if(tbody) tbody.innerHTML='<tr><td colspan="8" style="color:var(--red);padding:16px">'+e.message+'</td></tr>'; }
+}
+
+async function checkModelUpdates() {
+  const btn = $('mk-check-btn'), checking = $('mk-checking');
+  btn.disabled = true; checking.style.display = '';
+  try {
+    const r = await pFetch('/api/models/check-updates', { method: 'POST' }).then(r => r.json());
+    _modelUpdateState = (r.statuses || r);
+    _lastUpdateCheck = Date.now();
+    loadModels();
+  } catch(e) { console.warn('update check failed', e); }
+  finally { btn.disabled = false; checking.style.display = 'none'; }
 }
 
 // ── History ───────────────────────────────────────────────────────────────
@@ -931,8 +1187,8 @@ function setHistDays(d, btn) {
 async function loadHistory() {
   try {
     const [sr, hr] = await Promise.all([
-      fetch(__bp + `/api/stats/summary?days=${_histDays}`).then(r=>r.json()),
-      fetch(__bp + `/api/history?days=${_histDays}&limit=200`).then(r=>r.json())
+      pFetch(`/api/stats/summary?days=${_histDays}`).then(r=>r.json()),
+      pFetch(`/api/history?days=${_histDays}&limit=200`).then(r=>r.json())
     ]);
     const noDb = !sr || sr.total_requests === undefined;
     $('hist-no-db').style.display    = noDb ? '' : 'none';
@@ -977,6 +1233,7 @@ async function loadUsage() {
     const [dr, hr] = await Promise.all([
       fetch(__bp + `/api/usage/daily?days=${_usageDays}`).then(r=>r.json()),
       fetch(__bp + `/api/usage/hourly?days=7`).then(r=>r.json())
+
     ]);
     const daily=dr.data||[], hourly=hr.data||[];
     const noData = !daily.length && !hourly.length;
@@ -1009,6 +1266,7 @@ function setCostDays(d, btn) {
 async function loadCostPage() {
   try {
     const s = await fetch(__bp + `/api/cost/summary?days=${_costDays}`).then(r=>r.json());
+
     const noData = !s || s.total_requests === undefined;
     $('cost-no-db').style.display = noData ? '' : 'none';
     if (noData) return;
@@ -1033,6 +1291,7 @@ async function loadCostPage() {
         <span style="color:var(--nv);font-weight:700;font-family:var(--mono)">${f$(s.savings_vs_high||0)}</span>
       </div>`;
     const dr = await fetch(__bp + `/api/cost/daily?days=${_costDays}`).then(r=>r.json());
+
     const dd = dr.data||[];
     if (dd.length) {
       const lbl = dd.map(d=>d.date.slice(5));
@@ -1089,3 +1348,4 @@ if (typeof Sortable !== 'undefined') {
 </script>
 </body>
 </html>
+

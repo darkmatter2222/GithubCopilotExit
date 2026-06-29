@@ -101,11 +101,17 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         # Serve from the dashboard directory
         super().__init__(*args, directory=os.path.dirname(__file__), **kwargs)
 
-    def _serve_index(self, html=None):
+    def _serve_index(self):
         """Serve index.html with injected proxy configuration."""
-        if html is None:
+        try:
             with open(TEMPLATE_PATH, "r", encoding="utf-8") as f:
                 html = f.read()
+        except FileNotFoundError:
+            html = "<h1>Dashboard not found</h1>"
+
+        # Inject window.__PROXY_URL for browser pFetch() calls.
+        # Default is empty → browser uses relative paths (serve.py proxies server-side).
+        # Also inject __BASE_PATH when behind nginx reverse-proxy prefix (e.g., /copilot/).
         injection = (f'<script>window.__PROXY_URL="{HTML_PROXY_URL}";'
                      f'window.__BASE_PATH="{PROXY_PATH_PREFIX}";</script>')
         if "</head>" in html:
@@ -143,7 +149,7 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                 _proxy_to_upstream(self, "/" + _norm_path.lstrip("/"))
                 return
 
-        # Fallback: serve static files
+        # Fallback: serve other files from disk (static assets if any)
         super().do_GET()
 
 
