@@ -112,41 +112,38 @@ tr:hover td{background:rgba(255,255,255,.02)}
 .vram-bar{height:100%;background:var(--blue);transition:width .4s}
 .vram-gb{font-size:.63rem;color:var(--teal);font-family:var(--mono);white-space:nowrap;min-width:42px;text-align:right}
 
-/* ── MODEL CARDS (enriched) ── */
-.mmc{background:var(--card2);border:1px solid var(--border);border-radius:3px;padding:0;overflow:hidden;transition:border-color .2s,box-shadow .2s}
-.mmc.loaded{border-color:rgba(118,185,0,.45);box-shadow:0 0 12px rgba(118,185,0,.08)}
-.mmc:hover{border-color:#444}
-.mmc.is-alias-card{opacity:.82;border-left:3px solid var(--teal)}
-.mmc.is-base-hidden{display:none !important}
-.mc{background:var(--card2);border:1px solid var(--border);border-radius:2px;padding:9px 11px}
-.mh{display:flex;align-items:center;justify-content:space-between;padding:8px 10px 6px;cursor:pointer;user-select:none}
-.mh-name{font-size:.78rem;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
-.mh-meta{display:flex;gap:4px;align-items:center;margin-bottom:2px}
-.mh-link{font-size:.56rem;color:var(--teal);text-decoration:underline;cursor:pointer;flex-shrink:0}
-.mh-link:hover{color:var(--blue)}
-.mh-tag-alias{font-size:.54rem;padding:1px 4px;border-radius:2px;background:rgba(0,163,224,.1);color:var(--teal);letter-spacing:.02em;font-weight:600;flex-shrink:0}
-.mh-tag-base{font-size:.54rem;padding:1px 4px;border-radius:2px;background:rgba(255,193,7,.08);color:var(--yellow);letter-spacing:.02em;font-weight:600;flex-shrink:0}
-.mh-expand{font-size:.55rem;color:var(--sub);transition:transform .2s;flex-shrink:0;margin-left:6px}
-.mh-expand.open{transform:rotate(180deg)}
-.ms{display:flex;gap:4px;padding:0 10px 6px}
-.sb{font-size:.58rem;padding:2px 6px;border-radius:2px;font-weight:700;letter-spacing:.03em}
-.sb-arch{background:rgba(139,92,246,.12);color:var(--purple)}
-.sb-load{background:rgba(118,185,0,.12);color:var(--nv)}
-.sb-upd{background:rgba(118,185,0,.08);color:var(--nv)}
-.sb-upd.has-update{background:rgba(255,193,7,.12);color:var(--yellow)}
-.sb-unknown{background:rgba(255,255,255,.04);color:var(--sub)}
-.mc-rows{padding:0 10px 8px}
-.mc-row{display:flex;gap:6px;font-size:.64rem;padding:2px 0;border-top:1px solid #1a1a1a}
-.mc-row:first-child{border-top:none}
-.mc-row-l{color:var(--sub);min-width:72px;text-transform:uppercase;letter-spacing:.06em;font-weight:600}
-.mc-row-v{font-family:var(--mono);color:var(--text)}
-.mh-expand-wrap{display:flex;align-items:center;justify-content:space-between;padding:8px 10px 4px;cursor:pointer;user-select:none}
-.mh-expand-wrap .detail-toggle-btn{font-size:.55rem;color:var(--sub);background:none;border:1px solid var(--border);padding:1px 6px;border-radius:2px;cursor:pointer}
-.mh-expand-wrap .detail-toggle-btn:hover{color:var(--text);border-color:#444}
-.expand-all-bar{display:flex;justify-content:flex-end;padding:0 0 4px}
-.mc-cap-icons{display:flex;gap:5px;padding:4px 10px 8px}
-.cap-i{font-size:.6rem;padding:2px 6px;border-radius:2px;background:#1a1a1a;color:var(--sub);letter-spacing:.02em}
-.cap-i.active{background:rgba(0,163,224,.1);color:var(--blue)}
+/* ── MODELS TABLE ── */
+.models-table-wrap{overflow-x:auto;margin-bottom:10px;border:1px solid var(--border);border-radius:3px}
+.models-table{width:100%;border-collapse:collapse;font-size:.64rem;font-family:var(--mono)}
+.models-table thead th{position:sticky;top:0;background:#151515;padding:6px 8px;text-align:left;border-bottom:2px solid var(--nv);cursor:pointer;user-select:none;color:var(--sub);text-transform:uppercase;letter-spacing:.06em;font-weight:700;font-size:.58rem}
+.models-table thead th:hover{color:var(--nv)}
+.models-table thead th .sort-arrow{margin-left:3px;font-size:.5rem;opacity:.6}
+.models-table thead th.sorted .sort-arrow{opacity:1;color:var(--nv)}
+.models-table tbody tr{border-bottom:1px solid #1a1a1a;transition:background .1s}
+.models-table tbody tr:hover{background:#1a1a1a}
+.models-table tbody tr.in-vram{border-left:3px solid var(--nv);background:rgba(118,185,0,.03)}
+.models-table td{padding:5px 8px;vertical-align:middle}
+.models-row-expand{cursor:pointer;width:20px;text-align:center;color:var(--sub);font-size:.7rem}
+.models-row-expand:hover{color:var(--text)}
+.models-detail-row{background:#111;display:none}
+.models-detail-row.show{display:table-row}
+.models-detail-cell{padding:8px 12px !important;background:#0c0c0c}
+.models-detail-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:6px;font-size:.62rem}
+.models-detail-grid .md-label{color:var(--sub);text-transform:uppercase;letter-spacing:.04em;font-size:.56rem;font-weight:600}
+.models-detail-grid .md-value{font-family:var(--mono);color:var(--text)}
+.models-name-cell{min-width:220px}
+.models-name-main{font-weight:700;color:var(--text);font-size:.66rem}
+.models-name-sub{font-size:.54rem;color:var(--sub);margin-top:1px}
+.models-badge-inline{display:inline-block;padding:1px 4px;border-radius:2px;font-size:.52rem;font-weight:700;margin-left:4px;vertical-align:middle}
+.alias-tag{background:rgba(0,163,224,.1);color:var(--teal)}
+.base-tag{background:rgba(255,193,7,.08);color:var(--yellow)}
+.vram-dot{color:var(--nv);font-size:.7rem}
+.num-cell{text-align:right;font-family:var(--mono)}
+.update-ok{color:var(--nv)}
+.update-avail{color:var(--yellow);font-weight:700;cursor:pointer}
+.update-custom{color:var(--sub)}
+.models-info-link{color:var(--teal);text-decoration:none;cursor:pointer;font-size:.6rem;margin-left:4px}
+.models-info-link:hover{color:var(--blue);text-decoration:underline}
 
 /* ── FILTER/SORT BAR ── */
 .mfbar{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;align-items:center}
@@ -365,26 +362,32 @@ tr:hover td{background:rgba(255,255,255,.02)}
   </div>
 
   <div class="mfbar">
-    <select id="mk-sort" onchange="loadModels()">
-      <option value="name">Sort: Name</option>
-      <option value="params-desc">Sort: Params ↓</option>
-      <option value="size-desc">Sort: Size ↓</option>
-      <option value="ctx-desc">Sort: Context ↓</option>
-      <option value="date-desc">Sort: Newest First</option>
-    </select>
     <button id="f-ollama" class="active" onclick="toggleFilter(this,'ollama')">Ollama</button>
     <button id="f-vllm" onclick="toggleFilter(this,'vllm')">vLLM</button>
     <button id="f-moe" class="active" onclick="toggleFilter(this,'moe')">MoE</button>
     <button id="f-dense" class="active" onclick="toggleFilter(this,'dense')">Dense</button>
-    <button id="f-base-only" onclick="toggleFilter(this,'baseOnly')">Hide Base Copies (show originals only)</button>
+    <button id="f-base-only" onclick="toggleFilter(this,'baseOnly')">Hide Alias Duplicates</button>
     <span id="mk-checking" class="models-checking">⟳ checking registry…</span>
   </div>
 
-  <div class="expand-all-bar"><button style="font-size:.56rem;padding:1px 8px;border-radius:2px;background:#1c1c1c;color:var(--sub);border:1px solid var(--border);cursor:pointer" onclick="toggleAllDetails()">
-    <span id="expandAllLabel">[+] Expand All Details</span>
-  </button></div>
+  <div class="models-table-wrap">
+    <table class="models-table" id="modelsTable">
+      <thead>
+        <tr>
+          <th style="width:20px"></th>
+          <th class="sorted" data-sort="name" onclick="onSortChange('name')">Name <span class="sort-arrow">▲</span></th>
+          <th data-sort="params" class="num-cell" onclick="onSortChange('params')">Params <span class="sort-arrow">▲</span></th>
+          <th data-sort="size" class="num-cell" onclick="onSortChange('size')">Size (GB) <span class="sort-arrow">▲</span></th>
+          <th data-sort="ctx" class="num-cell" onclick="onSortChange('ctx')">Context <span class="sort-arrow">▲</span></th>
+          <th data-sort="quant" onclick="onSortChange('quant')">Quant <span class="sort-arrow">▲</span></th>
+          <th data-sort="arch" onclick="onSortChange('arch')">Arch <span class="sort-arrow">▲</span></th>
+          <th data-sort="update" onclick="onSortChange('update')">Update <span class="sort-arrow">▲</span></th>
+        </tr>
+      </thead>
+      <tbody id="modelsTbody"></tbody>
+    </table>
+  </div>
 
-  <div class="g3" id="models-grid"></div>
   <div id="models-empty" style="display:none;text-align:center;padding:40px;color:var(--sub);font-size:.76rem;text-transform:uppercase;letter-spacing:.08em">No models discovered — check Ollama is running</div>
 </div>
 
@@ -970,13 +973,30 @@ async function refreshLive() {
   finally { if(dot) dot.classList.remove('on'); }
 }
 
-// ── Models page (enriched) ────────────────────────────────────────────────
-let _modelUpdateState = {};  // keyed by model id: {status, registry_modified, registry_version}
+// ── Models table ────────────────────────────────────────────────────────────
+let _modelUpdateState = {};
 let _activeFilters = new Set(['ollama','vllm','moe','dense']);
-let _hideBaseCopies = false;    // when true, show only alias cards for alias groups — hide the hf.co base copy
-let _detailsExpanded = true;    // default: all detail rows visible immediately
-let _lastUpdateCheck = 0;       // timestamp of last update check (ms)
-const UPDATE_CHECK_MAX_AGE = 60 * 1000; // auto-check updates at most once per minute on models tab visit
+let _hideBaseCopies = false;
+let _lastUpdateCheck = 0;
+const UPDATE_CHECK_MAX_AGE = 60 * 1000;
+let _sortCol = 'name', _sortDir = 1;
+
+function onSortChange(col) {
+  document.querySelectorAll('#modelsTable thead th').forEach(th => {
+    th.classList.remove('sorted');
+    const arrow = th.querySelector('.sort-arrow');
+    if (arrow) arrow.textContent = '▲';
+  });
+  const activeTh = document.querySelector(`#modelsTable [data-sort="${col}"]`);
+  if (activeTh) {
+    activeTh.classList.add('sorted');
+    if (_sortCol === col) { _sortDir *= -1; }
+    else { _sortCol = col; _sortDir = 1; }
+    const arrow = activeTh.querySelector('.sort-arrow');
+    if (arrow) arrow.textContent = _sortDir===1 ? '▲' : '▼';
+  }
+  loadModels();
+}
 
 function toggleFilter(btn, filter) {
   if (filter === 'baseOnly') {
@@ -987,15 +1007,6 @@ function toggleFilter(btn, filter) {
     else { _activeFilters.add(filter); btn.classList.add('active'); }
   }
   loadModels();
-}
-
-function toggleAllDetails() {
-  _detailsExpanded = !_detailsExpanded;
-  const lbl = $('expandAllLabel');
-  if (lbl) lbl.textContent = _detailsExpanded ? '[-] Collapse All Details' : '[+] Expand All Details';
-  document.querySelectorAll('.detail-panel').forEach(dp => {
-    dp.style.display = _detailsExpanded ? '' : 'none';
-  });
 }
 
 function timeAgo(isoStr) {
@@ -1010,144 +1021,116 @@ function timeAgo(isoStr) {
 }
 
 function formatParams(n) {
-  if (!n) return '—';
-  return n.toLocaleString();
+  if (!n || n === '—') return '—';
+  const num = parseInt(String(n).replace(/[^\d]/g,''));
+  if (isNaN(num)) return String(n);
+  if (num >= 1e9) return (num/1e9).toFixed(1)+'B';
+  if (num >= 1e6) return (num/1e6).toFixed(0)+'M';
+  return num.toLocaleString();
 }
 
-/** Build a "human" display name that is informative even for hf.co models */
 function modelDisplayName(m) {
   let id = m.id;
-  // For hf.co/OBLITERATUS models, detect underlying base from parameter count or family
-  if (id.startsWith('hf.co/')) {
-    const parts = id.replace(/^hf\.co\//, '').split('/');
-    const modelPart = parts[parts.length - 1];
-
-    let baseName = '';
-    // Try to read parent_model hint from enriched metadata
-    if (m.parent_model && !m.parent_model.startsWith('hf.co')) {
-      baseName = m.parent_model;
-    } else {
-      // Heuristic: family + parameter_size
-      const family = (m.family || '').toLowerCase();
-      const paramSz = (m.parameter_size || '').toLowerCase();
-      if (family.includes('qwen') && (paramSz.includes('27') || m.parameter_count_exact > 20e9)) {
-        baseName = 'Qwen3.6 27B';
-      } else if (family.includes('qwen')) {
-        baseName = 'Qwen3';
-      } else {
-        baseName = parts[0].toUpperCase() + '/' + modelPart;
-      }
-    }
-
-    // Strip hf.co/ prefix from parent for display, clean tag
-    let cleanBase = baseName.replace(/^hf\.co\/[^/]+\//, '').replace(/:.*/, '');
-    const isOb = id.includes('OBLITERATUS') || m.license_short === 'Space';
-    let displayName = cleanBase.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-    if (isOb) displayName = displayName + ' (Uncensored)';
-    if (m.quantization_level && !displayName.includes('Q')) {
-      displayName = displayName + ' [' + m.quantization_level + ']';
-    }
-    return displayName;
+  if (id.startsWith('hf.co/OBLITERATUS')) {
+    const family = (m.family || '').toLowerCase();
+    if (family.includes('qwen') && (m.parameter_count_exact||0) > 20e9) return 'Qwen3.6 27B Obliterated';
+    if (family.includes('qwen')) return 'Qwen3 Obliterated';
+    return id.replace(/^hf\.co\/OBLITERATUS\//,'').replace(/:.*/,'')
+      .replace(/-/g,' ').replace(/\b\w/g, c => c.toUpperCase());
   }
-
-  // For "obliterated:latest" alias - show what it really points to
-  if (id === 'obliterated:latest' && m.parent_model) {
-    const parentClean = m.parent_model.replace(/^hf\.co\/OBLITERATUS\//, '').replace(/:.*/, '');
-    return `Qwen3 Uncensored → ${parentClean}`;
+  if (id === 'obliterated:latest') {
+    return 'Qwen3 Obliterated (alias)';
   }
-
-  // Default: clean name from id
   let name = id.replace(/:.+$/, '');
   return name.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
 
-/** Build link URL for model info */
 function modelInfoUrl(m) {
-  const id = m.id;
-  if (id.startsWith('hf.co/')) {
-    // Strip tag suffix for HuggingFace URL
-    return `https://huggingface.co/${id.replace(/^hf\.co\//, '').replace(/:.*/, '')}`;
-  }
-  const modelName = id.split(':')[0];
-  return `https://ollama.com/library/${modelName}`;
+  if (m.id.startsWith('hf.co/')) return `https://huggingface.co/${m.id.replace(/^hf\.co\//,'').replace(/:.*/,'')}`;
+  return `https://ollama.com/library/${m.id.split(':')[0]}`;
 }
 
-function renderModelCard(m) {
-  const isMoE = (m.expert_count || 0) > 0;
-  const arch = isMoE ? 'MoE' : 'Dense';
-  const ctxStr = m.context_length ? (m.context_length >= 1024 ? Math.floor(m.context_length/1024)+'K' : m.context_length) : '—';
-  const sizeGB = m.size_mb ? (m.size_mb / 1024).toFixed(2) : '—';
+function toggleRowExpand(tr) {
+  const detail = tr.nextElementSibling;
+  if (!detail || !detail.classList.contains('models-detail-row')) return;
+  const arrow = tr.querySelector('.models-row-expand');
+  if (detail.classList.toggle('show')) { if(arrow) arrow.textContent='▼'; }
+  else { if(arrow) arrow.textContent='▶'; }
+}
 
-  // Update status badge
-  const updateStatus = _modelUpdateState[m.id];
-  const hasUpdate = updateStatus && updateStatus.status === 'update_available';
-  const isUpToDate = updateStatus && updateStatus.status === 'up_to_date';
-  const isUnknown = updateStatus && updateStatus.status === 'unknown';
+function renderModelsTable(models) {
+  const tbody = $('modelsTbody');
+  if (!tbody) return;
 
-  let updateBadge = '';
-  if (hasUpdate) updateBadge = `<span class="sb sb-upd has-update" title="New version: ${updateStatus.registry_modified || ''}">⚠ Update</span>`;
-  else if (isUpToDate) updateBadge = '<span class="sb sb-upd">✓ Current</span>';
-  else if (isUnknown) updateBadge = '<span class="sb sb-unknown" title="Custom / private model — no registry tracking">? Custom</span>';
+  let html = '';
+  models.forEach(function(m) {
+    const isMoE = (m.expert_count || 0) > 0;
+    const arch = isMoE ? 'MoE' : 'Dense';
+    const ctxLen = m.context_length||0;
+    const ctxStr = ctxLen >= 1024 ? (ctxLen/1024)+'K' : String(ctxLen||'—');
+    const sizeGB = m.size_mb ? (m.size_mb / 1024).toFixed(2) : '—';
+    const paramsStr = formatParams(m.parameter_count_exact || m.parameter_size);
 
-  // Alias / Base badge in header
-  let tagHtml = '';
-  if (m.is_alias) {
-    const baseShort = (m.parent_model || '?').replace(/^hf\.co\/[^/]+\//, '').replace(/:.*/, '');
-    tagHtml = `<span class="mh-tag-alias" title="Alias of: ${m.parent_model}">ALIAS → ${baseShort}</span>`;
-  } else {
-    tagHtml = '<span class="mh-tag-base">BASE MODEL</span>';
-  }
+    let nameSub = '';
+    if (m.is_alias) {
+      const shortParent = (m.parent_model||'').replace(/^hf\.co\/OBLITERATUS\//,'').replace(/:.*/,'') || '?';
+      nameSub = '<span class="models-badge-inline alias-tag">alias</span> → '+shortParent;
+    } else {
+      nameSub = '<span class="models-badge-inline base-tag">base</span>';
+    }
 
-  // Info link
-  const infoUrl = modelInfoUrl(m);
+    const vramDot = m.is_loaded ? '<span class="vram-dot" title="In VRAM">● </span>' : '';
 
-  let capIcons = '';
-  if (m.capabilities?.includes('completion')) capIcons += '<span class="cap-i active">Complete</span>';
-  if (m.capabilities?.includes('tools') || m.capabilities?.includes('function_calling')) capIcons += '<span class="cap-i active">Tools</span>';
-  if (m.capabilities?.includes('thinking')) capIcons += '<span class="cap-i active">Think</span>';
-  if (m.capabilities?.includes('vision')) capIcons += '<span class="cap-i active">Vision</span>';
+    const upd = _modelUpdateState[m.id];
+    let updateHtml = '';
+    if (upd && upd.status === 'update_available') updateHtml = '<span class="update-avail">⚠ Update</span>';
+    else if (upd && upd.status === 'up_to_date') updateHtml = '<span class="update-ok">✓ Current</span>';
+    else if (upd && upd.status === 'unknown') updateHtml = '<span class="update-custom">? Custom</span>';
+    else updateHtml = '<span class="update-custom">Not checked</span>';
 
-  // Detail rows - always rendered, visibility controlled by _detailsExpanded
-  let detailRows = '';
-  const paramStr = formatParams(m.parameter_count_exact) || m.parameter_size || '—';
-  detailRows += `<div class="mc-row"><span class="mc-row-l">Parameters</span><span class="mc-row-v">${paramStr}</span></div>`;
-  if (m.is_alias && m.parent_model) {
-    detailRows += `<div class="mc-row"><span class="mc-row-l">Alias Of</span><span class="mc-row-v" style="color:var(--teal)">${m.parent_model}</span></div>`;
-  }
-  detailRows += `<div class="mc-row"><span class="mc-row-l">Disk Size</span><span class="mc-row-v">${sizeGB} GB</span></div>`;
-  detailRows += `<div class="mc-row"><span class="mc-row-l">Quantization</span><span class="mc-row-v">${m.quantization_level || '—'}</span></div>`;
-  detailRows += `<div class="mc-row"><span class="mc-row-l">Family</span><span class="mc-row-v">${(m.families||[]).join(', ') || m.family || '?'}</span></div>`;
-  if (isMoE) detailRows += `<div class="mc-row"><span class="mc-row-l">Experts</span><span class="mc-row-v">${m.expert_count} total, ${m.expert_used_count||'?'} active</span></div>`;
-  detailRows += `<div class="mc-row"><span class="mc-row-l">Blocks</span><span class="mc-row-v">${m.block_count||'—'}</span></div>`;
-  detailRows += `<div class="mc-row"><span class="mc-row-l">Context</span><span class="mc-row-v">${m.context_length?.toLocaleString() || '—'} tokens</span></div>`;
-  detailRows += `<div class="mc-row"><span class="mc-row-l">Modified</span><span class="mc-row-v">${timeAgo(m.modified_at)}</span></div>`;
-  detailRows += `<div class="mc-row"><span class="mc-row-l">License</span><span class="mc-row-v">${m.license_short||'Unknown'}</span></div>`;
-  detailRows += `<div class="mc-row"><span class="mc-row-l">Update</span><span class="mc-row-v">${updateBadge || 'Not checked'}</span></div>`;
+    const infoUrl = modelInfoUrl(m);
 
-  return `<div class="mmc${m.is_loaded?' loaded':''}${m.is_alias?' is-alias-card':''}" data-moe="${isMoE}" data-arch="${arch}" data-backend="${m.backend}" data-digest="${m.digest||''}">
-    <div class="mh-meta">
-      <span class="mh-name" title="${m.id}">${modelDisplayName(m)}</span>
-      ${tagHtml}
-    </div>
-    <div class="ms">
-      <span class="sb sb-arch">${arch}${m.quantization_level?' '+m.quantization_level:''}</span>
-      <span class="tag tag-gray">${paramStr}</span>
-      <span class="tag tag-gray">${ctxStr} ctx</span>
-      ${m.is_loaded ? '<span class="sb sb-load">● VRAM</span>' : ''}
-      ${updateBadge ? updateBadge : ''}
-    </div>
-    <div class="mc-cap-icons">${capIcons}</div>
-    <div style="padding:0 10px 2px"><a href="${infoUrl}" target="_blank" rel="noopener" class="mh-link">ℹ Model Info ↗</a></div>
-    <div class="detail-panel mc-rows" style="display: ${_detailsExpanded?'':'none'}">${detailRows}</div>
-  </div>`;
+    let detailGrid = '';
+    detailGrid += '<div><span class="md-label">Full ID</span><br><span class="md-value">'+m.id+'</span></div>';
+    if (m.parent_model) detailGrid += '<div><span class="md-label">Parent Model</span><br><span class="md-value" style="color:var(--teal)">'+m.parent_model+'</span></div>';
+    detailGrid += '<div><span class="md-label">Family</span><br><span class="md-value">'+((m.families||[]).join(', ') || m.family||'?')+'</span></div>';
+    detailGrid += '<div><span class="md-label">Blocks</span><br><span class="md-value">'+(m.block_count||'—')+'</span></div>';
+    if (isMoE) detailGrid += '<div><span class="md-label">Experts</span><br><span class="md-value">'+m.expert_count+' total, '+(m.expert_used_count||'?')+' active</span></div>';
+    detailGrid += '<div><span class="md-label">License</span><br><span class="md-value">'+(m.license_short||'Unknown')+'</span></div>';
+    detailGrid += '<div><span class="md-label">Modified</span><br><span class="md-value">'+timeAgo(m.modified_at)+'</span></div>';
+    detailGrid += '<div><span class="md-label">Digest</span><br><span class="md-value" style="font-size:.54rem">'+(m.digest||'—')+'</span></div>';
+    detailGrid += '<div><span class="md-label">Info</span><br><a href="'+infoUrl+'" target="_blank" class="models-info-link">Model Page ↗</a></div>';
+
+    html += '<tr class="'+(m.is_loaded?'in-vram':'')+'" data-backend="'+m.backend+'" data-moe="'+isMoE+'">'
+      +'<td class="models-row-expand" onclick="toggleRowExpand(this.closest(\'tr\'))">▶</td>'
+      +'<td class="models-name-cell"><span class="models-name-main">'+vramDot+modelDisplayName(m)+'</span><br><span class="models-name-sub">'+nameSub+'</span></td>'
+      +'<td class="num-cell">'+paramsStr+'</td>'
+      +'<td class="num-cell">'+sizeGB+'</td>'
+      +'<td class="num-cell">'+(ctxStr||'—')+'</td>'
+      +'<td>'+(m.quantization_level||'—')+'</td>'
+      +'<td>'+arch+'</td>'
+      +'<td>'+updateHtml+'</td>'
+      +'</tr>';
+    html += '<tr class="models-detail-row"><td colspan="8" class="models-detail-cell"><div class="models-detail-grid">'+detailGrid+'</div></td></tr>';
+  });
+
+  tbody.innerHTML = html;
+}
+
+async function silentUpdateCheck() {
+  try {
+    const r = await pFetch('/api/models/check-updates', { method: 'POST' }).then(r => r.json());
+    _modelUpdateState = (r.statuses || r);
+    _lastUpdateCheck = Date.now();
+  } catch(e) { console.warn('silent update check failed', e); }
 }
 
 async function loadModels() {
-  const grid = $('models-grid'), empty = $('models-empty');
-  grid.innerHTML = '<div style="color:var(--sub);padding:16px;font-size:.74rem">Loading…</div>';
+  const tbody = $('modelsTbody');
+  const empty = $('models-empty');
+  if (tbody) tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--sub);padding:16px;font-size:.7rem">Loading…</td></tr>';
   empty.style.display = 'none';
 
-  // Auto-check updates if last check is stale (>1 minute) and state is empty or old
   if (Date.now() - _lastUpdateCheck > UPDATE_CHECK_MAX_AGE) {
     await silentUpdateCheck();
   }
@@ -1156,67 +1139,52 @@ async function loadModels() {
     const er = await pFetch('/api/models/enriched').then(r => r.json());
     let models = er.data || [];
 
-    // KPIs (always computed on full list)
+    // KPIs
     $('mk-total').textContent = models.length;
-    $('mk-running').textContent = models.filter(m => m.is_loaded).length;
-    $('mk-ollama').textContent = models.filter(m => m.backend === 'ollama').length;
-    $('mk-vllm').textContent = models.filter(m => m.backend === 'vllm').length;
-    const baseModels = models.filter(m => !m.is_alias);
-    const totalSizeMB = baseModels.reduce((s, m) => s + (m.size_mb || 0), 0);
+    $('mk-running').textContent = models.filter(function(m) { return m.is_loaded; }).length;
+    $('mk-ollama').textContent = models.filter(function(m) { return m.backend==='ollama'; }).length;
+    $('mk-vllm').textContent = models.filter(function(m) { return m.backend==='vllm'; }).length;
+    const baseModels = models.filter(function(m) { return !m.is_alias; });
+    const totalSizeMB = baseModels.reduce(function(s, m) { return s + (m.size_mb||0); }, 0);
     $('mk-disk').textContent = (totalSizeMB / 1024).toFixed(1) + ' GB';
-    $('mk-moe').textContent = models.filter(m => (m.expert_count || 0) > 0).length;
-    $('mk-dense').textContent = models.filter(m => (m.expert_count || 0) === 0).length;
+    $('mk-moe').textContent = models.filter(function(m) { return (m.expert_count||0)>0; }).length;
+    $('mk-dense').textContent = models.filter(function(m) { return (m.expert_count||0)===0; }).length;
 
     // Filter by backend/arch type
     if (_activeFilters.size < 4) {
-      models = models.filter(m => {
-        const backendOk = _activeFilters.has('ollama') && m.backend === 'ollama'
-          || _activeFilters.has('vllm') && m.backend === 'vllm';
-        const isMoE = (m.expert_count || 0) > 0;
-        const archOk = (isMoE && _activeFilters.has('moe')) || (!isMoE && _activeFilters.has('dense'));
+      models = models.filter(function(m) {
+        var backendOk = _activeFilters.has('ollama')&&m.backend==='ollama' || _activeFilters.has('vllm')&&m.backend==='vllm';
+        var isMoE = (m.expert_count||0)>0;
+        var archOk = (isMoE&&_activeFilters.has('moe'))||(!isMoE&&_activeFilters.has('dense'));
         return backendOk && archOk;
       });
     }
 
-    // Hide hf.co base copies when "Hide Base Copies" is active — but only if an alias exists for the same group
+    // Hide hf.co base copies when "Hide Alias Duplicates" is active
     if (_hideBaseCopies) {
-      const allModels = er.data || [];
-      const hasAliasForDigest = new Set();
-      allModels.filter(a => a.is_alias && a.digest).forEach(a => hasAliasForDigest.add(a.digest));
-      models = models.filter(m => !(m.id.startsWith('hf.co/') && hasAliasForDigest.has(m.digest)));
+      var hasAliasForDigest = new Set();
+      (er.data||[]).filter(function(a){return a.is_alias&&a.digest;}).forEach(function(a){hasAliasForDigest.add(a.digest);});
+      models = models.filter(function(m){return !(m.id.startsWith('hf.co/') && hasAliasForDigest.has(m.digest));});
     }
 
-    // Sort
-    const sort = $('mk-sort').value;
-    switch(sort) {
-      case 'name': models.sort((a,b) => a.id.localeCompare(b.id)); break;
-      case 'params-desc': models.sort((a,b) => (b.parameter_count_exact||0) - (a.parameter_count_exact||0)); break;
-      case 'size-desc': models.sort((a,b) => (b.size_bytes||0) - (a.size_bytes||0)); break;
-      case 'ctx-desc': models.sort((a,b) => (b.context_length||0) - (a.context_length||0)); break;
-      case 'date-desc': models.sort((a,b) => new Date(b.modified_at||0) - new Date(a.modified_at||0)); break;
-    }
+    // Sort by current column
+    var dir = _sortDir;
+    if (_sortCol==='name') models.sort(function(a,b){return a.id.localeCompare(b.id)*dir;});
+    else if (_sortCol==='params') { models.sort(function(a,b){var va=parseInt(String(a.parameter_count_exact||a.parameter_size).replace(/[^\d]/g,''))||0, vb=parseInt(String(b.parameter_count_exact||b.parameter_size).replace(/[^\d]/g,''))||0; return (va-vb)*dir;}); }
+    else if (_sortCol==='size') models.sort(function(a,b){return ((a.size_bytes||0)-(b.size_bytes||0))*dir;});
+    else if (_sortCol==='ctx') models.sort(function(a,b){return ((a.context_length||0)-(b.context_length||0))*dir;});
+    else if (_sortCol==='quant') models.sort(function(a,b){return (a.quantization_level||'').localeCompare(b.quantization_level||'')*dir;});
+    else if (_sortCol==='update') { var prio={up_to_date:2,unknown:1,update_available:0}; models.sort(function(a,b){return ((prio[_modelUpdateState[a.id]?.status]??3)-(prio[_modelUpdateState[b.id]?.status]??3))*dir;}); }
 
-    if (!models.length) { 
-      grid.innerHTML = ''; empty.style.display = '';
-      if (_activeFilters.size < 4) {
-        empty.textContent = 'No models match current filters';
-      } else {
-        empty.textContent = 'No models discovered — check Ollama is running';
-      }
+    if (!models.length) {
+      tbody.innerHTML = '';
+      empty.style.display = '';
+      empty.textContent = _activeFilters.size<4 ? 'No models match current filters' : 'No models discovered';
       return;
     }
 
-    grid.innerHTML = models.map(m => renderModelCard(m)).join('');
-  } catch(e) { grid.innerHTML = `<div style="color:var(--red);padding:16px">${e.message}</div>`; }
-}
-
-// Silent update check — no UI feedback, just updates state for rendering
-async function silentUpdateCheck() {
-  try {
-    const r = await pFetch('/api/models/check-updates', { method: 'POST' }).then(r => r.json());
-    _modelUpdateState = (r.statuses || r);
-    _lastUpdateCheck = Date.now();
-  } catch(e) { console.warn('silent update check failed', e); }
+    renderModelsTable(models);
+  } catch(e) { if(tbody) tbody.innerHTML = '<tr><td colspan="8" style="color:var(--red);padding:16px">'+e.message+'</td></tr>'; }
 }
 
 async function checkModelUpdates() {
