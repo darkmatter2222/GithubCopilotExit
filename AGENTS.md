@@ -179,6 +179,46 @@ Dashboard: `http://localhost:8001/dashboard`
 
 ---
 
+## Databricks Dashboard Deployment
+
+The dashboard runs on Databricks (192.168.86.48) behind nginx ingress at `/copilot/` path prefix.
+
+### Architecture
+```
+Browser → nginx /copilot/ → serve.py:3002 → DGX Spark :8001
+           (strips prefix)    (normalizes paths)  (proxies to Ollama)
+```
+
+### Deploy Checklist (DO NOT SKIP STEPS)
+1. Edit `dashboard/index.html` and/or `dashboard/serve.py` locally
+2. SCP files to Databricks: `scp dashboard/* databricks:~/GithubCopilotExit/dashboard/`
+3. Build image with **--no-cache**: `docker build --no-cache -f Dockerfile.deploy -t gcopilot-dashboard .`
+4. Stop + remove old container: `docker stop gcopilot-dashboard && docker rm gcopilot-dashboard`
+5. Run new container with EXACT env vars:
+   ```bash
+   docker run -d --name gcopilot-dashboard \
+     --restart unless-stopped \
+     --network docucraft_docucraft-network \
+     -p 3002:3002 \
+     -e PROXY_BACKEND=http://192.168.86.39:8001 \
+     -e DASHBOARD_PORT=3002 \
+     -e PROXY_PATH_PREFIX=/copilot \
+     gcopilot-dashboard
+   ```
+6. Validate via nginx: `curl -sk https://127.0.0.1/copilot/stats -H "Host: susmannet.duckdns.org"`
+
+### Critical Gotchas (read TROUBLESHOOTING.md)
+- **Use `PROXY_BACKEND`** not `PROXY_URL` — wrong var causes 502 errors
+- **Use `docucraft_docucraft-network`** not `--network host` — nginx Docker DNS resolves container name
+- **Always `--no-cache` on build** — cached layers ignore code changes
+- **JS fetch calls must use `__bp + '/path'`** — hardcoded paths break behind nginx `/copilot/ prefix
+- **serve.py must normalize paths** — `_norm_path = self.path.split("?")[0]` before routing
+
+### Extensions
+Use `validate-databricks-dashboard` and `sync-dashboard-databricks` tools from deploy-dgx extension.
+
+---
+
 ## Repository Structure
 
 ```
@@ -193,12 +233,16 @@ proxy/
   dashboard.html       Served at /dashboard (copy of dashboard/index.html)
 dashboard/
   index.html           Standalone dashboard — pure HTML/JS, reads proxy API
+  serve.py             HTTP server for remote nginx deployment
 scripts/
   deploy.py            Full deploy to DGX Spark (build + restart)
   setup-local.ps1      One-time local .venv + dependency setup
   start-proxy-local.ps1  Start proxy locally (RTX 5090)
+.github/extensions/
+  deploy-dgx/          Extensions for deployment and validation
 .env.example           Config template — copy to .env and fill in values
 AGENTS.md              This file
+TROUBLESHOOTING.md     Common bugs, fixes, and prevention guidelines
 ```
 
 ---
