@@ -102,6 +102,7 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         super().__init__(*args, directory=os.path.dirname(__file__), **kwargs)
 
     def _serve_index(self):
+        """Serve index.html with injected proxy configuration."""
         try:
             with open(TEMPLATE_PATH, "r", encoding="utf-8") as f:
                 html = f.read()
@@ -123,10 +124,17 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         self.wfile.write(html.encode("utf-8"))
 
     def do_GET(self):
-        if self.path == "/" or self.path == "/index.html":
+        # Normalize path: strip nginx-injected prefix if configured
+        _norm_path = self.path.split("?")[0]  # remove query string for routing
+        if PROXY_PATH_PREFIX and _norm_path.startswith(PROXY_PATH_PREFIX):
+            _norm_path = _norm_path[len(PROXY_PATH_PREFIX):] or "/"
+            if not _norm_path.startswith("/"):
+                _norm_path = "/" + _norm_path
+
+        if _norm_path == "/" or _norm_path == "/index.html":
             self._serve_index()
             return
-        elif self.path == "/healthcheck":
+        elif _norm_path == "/healthcheck":
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
@@ -134,11 +142,13 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                                   "proxy_backend": PROXY_BACKEND})
             self.wfile.write(payload.encode())
             return
+
         # Proxy API requests to upstream proxy so remote dashboard can fetch live data
         for prefix in API_PREFIXES:
-            if self.path.startswith(prefix):
-                _proxy_to_upstream(self, self.path)
+            if _norm_path.startswith(prefix):
+                _proxy_to_upstream(self, "/" + _norm_path.lstrip("/"))
                 return
+
         # Fallback: serve other files from disk (static assets if any)
         super().do_GET()
 

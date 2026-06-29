@@ -94,7 +94,7 @@ class SessionDB:
                         "_id": {"$dateToString": {"format": "%Y-%m-%d", "date": "$timestamp"}},
                         "total_input_tokens": {"$sum": "$prompt_tokens"},
                         "total_output_tokens": {"$sum": "$completion_tokens"},
-                        "total_thinking_tokens": {"$sum": {"$ifNull": ["$thinking_tokens", 0]}},
+                        "total_total_tokens": {"$sum": {"$add": ["$prompt_tokens", "$completion_tokens"]}},
                         "request_count": {"$sum": 1},
                     }
                 },
@@ -126,7 +126,6 @@ class SessionDB:
                         "total_tokens": {"$sum": {"$add": ["$prompt_tokens", "$completion_tokens"]}},
                         "input_tokens": {"$sum": "$prompt_tokens"},
                         "output_tokens": {"$sum": "$completion_tokens"},
-                        "thinking_tokens": {"$sum": {"$ifNull": ["$thinking_tokens", 0]}},
                     }
                 },
                 {"$sort": {"_id": 1}},
@@ -155,7 +154,7 @@ class SessionDB:
                         "total_requests": {"$sum": 1},
                         "total_input_tokens": {"$sum": "$prompt_tokens"},
                         "total_output_tokens": {"$sum": "$completion_tokens"},
-                        "total_thinking_tokens": {"$sum": {"$ifNull": ["$thinking_tokens", 0]}},
+                        "total_total_tokens": {"$sum": {"$add": ["$prompt_tokens", "$completion_tokens"]}},
                         "avg_prompt_tokens": {"$avg": "$prompt_tokens"},
                         "avg_completion_tokens": {"$avg": "$completion_tokens"},
                         "avg_duration": {"$avg": "$duration_secs"},
@@ -188,7 +187,7 @@ class SessionDB:
                         "total_requests": {"$sum": 1},
                         "total_input_tokens": {"$sum": "$prompt_tokens"},
                         "total_output_tokens": {"$sum": "$completion_tokens"},
-                        "total_thinking_tokens": {"$sum": {"$ifNull": ["$thinking_tokens", 0]}},
+                        "total_total_tokens": {"$sum": {"$add": ["$prompt_tokens", "$completion_tokens"]}},
                         "total_duration_secs": {"$sum": "$duration_secs"},
                     }
                 },
@@ -215,7 +214,7 @@ class SessionDB:
                         "_id": {"$dateToString": {"format": "%Y-%m-%d", "date": "$timestamp"}},
                         "total_input_tokens": {"$sum": "$prompt_tokens"},
                         "total_output_tokens": {"$sum": "$completion_tokens"},
-                        "total_thinking_tokens": {"$sum": {"$ifNull": ["$thinking_tokens", 0]}},
+                        "total_total_tokens": {"$sum": {"$add": ["$prompt_tokens", "$completion_tokens"]}},
                         "total_duration_secs": {"$sum": "$duration_secs"},
                     }
                 },
