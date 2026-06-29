@@ -75,18 +75,18 @@ const session = await joinSession({
             handler: async () => {
                 let results = [];
                 try {
-                    const st = await ssh("databricks", `sudo docker inspect gcopilot-dashboard --format '{{.State.Status}}' 2>/dev/null`);
+                    const st = await ssh("databricks", `docker inspect gcopilot-dashboard --format '{{.State.Status}}' 2>/dev/null`);
                     results.push(`Container: ${st || "not found"}`);
                 } catch (e) { results.push(`❌ Status: ${e.message}`); }
                 try {
-                    const tc = await ssh("databricks", `curl -s http://localhost:3000/ | grep -oi 'Think Tok' | wc -l`);
-                    const totc = await ssh("databricks", `curl -s http://localhost:3000/ | grep -oi 'Total Tok' | wc -l`);
+                    const tc = await ssh("databricks", `curl -s http://localhost:3002/ | grep -oi 'Think Tok' | wc -l`);
+                    const totc = await ssh("databricks", `curl -s http://localhost:3002/ | grep -oi 'Total Tok' | wc -l`);
                     results.push(`Think count: ${tc} (expect 0)`);
                     results.push(`Total Tok count: ${totc} (expect >=1)`);
                 } catch (e) { results.push(`❌ Content: ${e.message}`); }
                 try {
-                    const gc = await ssh("databricks", `curl -s http://localhost:3000/ | grep -c 'panel-grip'`);
-                    results.push(`Grip refs: ${gc} (expect >=7)`);
+                    const gc = await ssh("databricks", `curl -s http://localhost:3002/ | grep -c 'panel-grip'`);
+                    results.push(`Gripe refs: ${gc} (expect >=7)`);
                 } catch (e) { results.push(`❌ Gripp: ${e.message}`); }
                 return "Databricks Validation:\n" + results.join("\n");
             },
@@ -113,17 +113,17 @@ const session = await joinSession({
                     steps.push("✅ Copied serve.py");
                 } catch (e) { return `❌ SCP py: ${e.message}`; }
                 try {
-                    await ssh("databricks", `cd ~/GithubCopilotExit && sudo docker build -f dashboard/Dockerfile.deploy -t gcopilot-dashboard .`);
+                    await ssh("databricks", `cd ~/GithubCopilotExit && docker build -f dashboard/Dockerfile.deploy -t gcopilot-dashboard .`);
                     steps.push("✅ Rebuilt image");
                 } catch (e) { return `❌ Build: ${e.message}`; }
                 try {
-                    await ssh("databricks", `sudo docker stop gcopilot-dashboard 2>/dev/null; sudo docker rm gcopilot-dashboard 2>/dev/null`);
-                    await ssh("databricks", `sudo docker run -d --name gcopilot-dashboard --restart unless-stopped -e PROXY_URL=http://192.168.86.39:8001 -e MONGO_URI=$MONGO_URI --network host gcopilot-dashboard`);
-                    steps.push("✅ Restarted container");
+                    await ssh("databricks", `docker stop gcopilot-dashboard 2>/dev/null; docker rm gcopilot-dashboard 2>/dev/null`);
+                    await ssh("databricks", `docker run -d --name gcopilot-dashboard --restart unless-stopped -e PROXY_URL=http://192.168.86.39:8001 -e DASHBOARD_PORT=3002 --network host gcopilot-dashboard`);
+                    steps.push("✅ Restarted container on :3002");
                 } catch (e) { return `❌ Restart: ${e.message}`; }
                 if (args.verify !== false) {
                     try {
-                        await ssh("databricks", `sleep 3 && curl -s http://localhost:3000/ | head -c 100`);
+                        await ssh("databricks", `sleep 3 && curl -s http://localhost:3002/ | head -c 100`);
                         steps.push("✅ Health OK");
                     } catch (e) { steps.push(`⚠️ Quick check: ${e.message}`); }
                 }
