@@ -28,7 +28,7 @@ class RequestStats:
     finish_time: float = 0.0
     prompt_tokens: int = 0          # input / context tokens
     completion_tokens: int = 0      # output tokens (accumulated during stream)
-    thinking_tokens: int = 0        # reasoning/thinking tokens (from Ollama usage)
+    total_tokens: int = 0           # prompt + completion (total billable tokens)
     prompt_eval_count: int = 0
     prompt_eval_duration_ns: int = 0
     eval_count: int = 0             # streamed token count
@@ -76,7 +76,7 @@ class TokenTracker:
         self.error_count = 0
         self.total_prompt_tokens = 0      # monotonic session total (never decremented)
         self.total_completion_tokens = 0  # monotonic session total (never decremented)
-        self.total_thinking_tokens = 0    # monotonic session total for thinking tokens
+        self.total_total_tokens = 0       # monotonic session total (input + output)
         self.tps_history: list = []       # [{ts, value}]
         self.events: list = []            # [{ts, level, message}]
 
@@ -131,8 +131,11 @@ class TokenTracker:
             ct = max(s.completion_tokens, usage.get("completion_tokens", 0), s.eval_count)
             s.completion_tokens = ct
             s.eval_count = max(s.eval_count, ct)
-            # Capture thinking tokens (reasoning tokens stripped by Ollama but reported in usage)
-            s.thinking_tokens = usage.get("loading_tokens", 0) + usage.get("reasoning_tokens", 0)
+            # Compute total tokens (Ollama reports: prompt_tokens, completion_tokens, total_tokens)
+            s.total_tokens = max(
+                s.prompt_tokens + s.completion_tokens,
+                usage.get("total_tokens", 0),
+            )
             # Optional timing hints from Ollama
             s.prompt_eval_count = usage.get("prompt_eval_count", s.prompt_eval_count)
             s.prompt_eval_duration_ns = usage.get("prompt_eval_duration_ns",
@@ -148,15 +151,15 @@ class TokenTracker:
             self.error_count += 1
             in_t = s.prompt_tokens if s else 0
             out_t = max(s.completion_tokens, s.eval_count) if s else 0
-            think_t = s.thinking_tokens if s else 0
+            total_t = in_t + out_t
             dur = round((time.time() - s.start_time), 1) if s else 0
             # Store in history too
             self._history.insert(0, {
                 "id": request_id,
                 "model": s.model if s else "?",
                 "prompt_tokens": in_t,
-                "output_tokens": out_t,
-                "thinking_tokens": think_t,
+                "completion_tokens": out_t,
+                "total_tokens": total_t,
                 "duration": dur,
                 "active": False,
                 "error": message,
@@ -164,7 +167,7 @@ class TokenTracker:
             # Accumulate into monotonic session totals (never decremented)
             self.total_prompt_tokens += in_t
             self.total_completion_tokens += out_t
-            self.total_thinking_tokens += think_t
+            self.total_total_tokens += total_t
             self._log_event("ERROR", f"{request_id}: {message}")
 
             # ── Persist error to MongoDB (fire-and-forget) ──
@@ -174,8 +177,7 @@ class TokenTracker:
                     "model": s.model if s else "?",
                     "prompt_tokens": in_t,
                     "completion_tokens": out_t,
-                    "thinking_tokens": think_t,
-                    "total_tokens": in_t + out_t + think_t,
+                    "total_tokens": total_t,
                     "duration_secs": dur,
                     "ttft_secs": 0,
                     "tps": 0,
@@ -198,15 +200,14 @@ class TokenTracker:
             dur = s.finish_time - s.start_time
             out = max(s.completion_tokens, s.eval_count)
             in_t = s.prompt_tokens
-            think_t = s.thinking_tokens
+            total_t = max(in_t + out, s.total_tokens)
             # Push to history
             entry = {
                 "id": s.request_id,
                 "model": s.model,
                 "prompt_tokens": in_t,
-                "output_tokens": out,
-                "thinking_tokens": think_t,
-                "total_tokens": in_t + out + think_t,
+                "completion_tokens": out,
+                "total_tokens": total_t,
                 "duration": round(dur, 1),
                 "ttft": round(s.first_token_time - s.start_time, 2) if s.first_token_time else 0,
                 "tps": round(s.tps_since_first_token, 1),
@@ -217,11 +218,11 @@ class TokenTracker:
                 self._history.pop()
 
             self._log_event("INFO",
-                            f"{s.request_id} done · {in_t} in / {out} out / {think_t} thinking · {dur:.1f}s")
+                            f"{s.request_id} done · {in_t} in / {out} out · {dur:.1f}s")
             # Accumulate into monotonic session totals (never decremented)
             self.total_prompt_tokens += in_t
             self.total_completion_tokens += out
-            self.total_thinking_tokens += think_t
+            self.total_total_tokens += total_t
 
             # ── Persist to MongoDB (fire-and-forget, non-blocking) ──
             if db_backend and db_backend.enabled:
@@ -230,8 +231,7 @@ class TokenTracker:
                     "model": s.model,
                     "prompt_tokens": in_t,
                     "completion_tokens": out,
-                    "thinking_tokens": think_t,
-                    "total_tokens": in_t + out + think_t,
+                    "total_tokens": total_t,
                     "duration_secs": round(dur, 2),
                     "ttft_secs": round(s.first_token_time - s.start_time, 3) if s.first_token_time else 0,
                     "tps": round(s.tps_since_first_token, 1),
@@ -265,11 +265,10 @@ class TokenTracker:
             active_in = sum(s.prompt_tokens for s in self._requests.values())
             active_out_sum = sum(max(s.completion_tokens, s.eval_count)
                                 for s in self._requests.values())
-            active_think_sum = sum(s.thinking_tokens for s in self._requests.values())
             # Session totals = monotonic accumulator + currently active requests
             total_in = self.total_prompt_tokens + active_in
             total_out = self.total_completion_tokens + active_out_sum
-            total_think = self.total_thinking_tokens + active_think_sum
+            total_total = self.total_total_tokens + active_in + active_out_sum
 
             self._snapshot_tps()
 
@@ -277,12 +276,13 @@ class TokenTracker:
             for s in active_list:
                 out = max(s.completion_tokens, s.eval_count)
                 elapsed = now - s.start_time
+                entry_total = max(s.prompt_tokens + out, s.total_tokens)
                 active_summaries.append({
                     "id": s.request_id,
                     "model": s.model,
                     "prompt_tokens": s.prompt_tokens,
-                    "output_tokens": out,
-                    "thinking_tokens": s.thinking_tokens,
+                    "completion_tokens": out,
+                    "total_tokens": entry_total,
                     "tps": round(s.tps_since_first_token, 1),
                     "elapsed": round(elapsed, 1),
                     "ttft": round(s.ttft_ms, 1),
@@ -300,11 +300,11 @@ class TokenTracker:
                 "combined_tps": round(combined_tps, 1),
                 "total_input_tokens": total_in,
                 "total_output_tokens": total_out,
-                "total_thinking_tokens": total_think,
+                "total_total_tokens": total_total,
 
                 # charts
                 "tps_history": list(self.tps_history),
-                "io_series": [h for h in self._history[:15] if h.get("prompt_tokens") or h.get("output_tokens")],
+                "io_series": [h for h in self._history[:15] if h.get("prompt_tokens") or h.get("completion_tokens")],
 
                 # event log (newest first)
                 "events": list(reversed(self.events)),

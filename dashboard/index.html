@@ -62,11 +62,16 @@ nav{position:sticky;top:0;z-index:100;background:var(--surface);border-bottom:2p
 .sortable-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:8px}
 
 /* ── PANEL ── */
-.panel{background:var(--card);border:1px solid var(--border);border-radius:2px;overflow:hidden}
+.panel{background:var(--card);border:1px solid var(--border);border-radius:2px;overflow:hidden;position:relative}
 .ph{background:var(--surface);border-bottom:1px solid var(--border);padding:5px 10px;display:flex;align-items:center;justify-content:space-between;font-size:.57rem;text-transform:uppercase;letter-spacing:.09em;color:var(--sub);font-weight:700;user-select:none}
 .ph.grab{cursor:grab}.ph.grab:active{cursor:grabbing}
 .drag-hint{opacity:0;margin-right:5px;font-size:.68rem;color:var(--border2);transition:opacity .15s}
 .panel:hover .drag-hint{opacity:1}
+
+/* ── GRIP HANDLE (right side of panel header) ── */
+.panel-grip{opacity:.3;font-size:.78rem;color:var(--sub);cursor:grab;user-select:none;line-height:1;padding-left:6px;margin-right:2px;transition:opacity .2s}
+.panel-grip:hover,.panel-grip:active{opacity:1}
+.panel-grip:active{cursor:grabbing}
 .ph-badge{font-size:.59rem;padding:1px 7px;border-radius:2px;background:var(--card2);color:var(--sub);font-weight:600;text-transform:none;letter-spacing:0;font-family:var(--mono)}
 .ph-badge.nv{color:var(--nv)}.ph-badge.bl{color:var(--blue)}
 .panel-body{padding:9px 10px}
@@ -200,7 +205,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
     <div class="kpi rd"><div class="kpi-label">Errors</div><div class="kpi-val" id="kpi-err">—</div></div>
     <div class="kpi tl"><div class="kpi-label">Input Tok</div><div class="kpi-val" id="kpi-in">—</div></div>
     <div class="kpi yw"><div class="kpi-label">Output Tok</div><div class="kpi-val" id="kpi-out">—</div></div>
-    <div class="kpi pu"><div class="kpi-label">Think Tok</div><div class="kpi-val" id="kpi-think">—</div></div>
+    <div class="kpi pu"><div class="kpi-label">Total Tok</div><div class="kpi-val" id="kpi-total">—</div></div>
     <div class="kpi bl"><div class="kpi-label">Active</div><div class="kpi-val" id="kpi-act">—</div></div>
   </div>
 
@@ -211,6 +216,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
       <div class="ph grab">
         <span><span class="drag-hint">⠿</span>GPU Utilization</span>
         <span id="gpu-temp-badge" class="ph-badge">—</span>
+        <span class="panel-grip">☰</span>
       </div>
       <div class="panel-body">
         <div class="cw cw120" id="gpu-util-wrap"><canvas id="cGpuUtil"></canvas></div>
@@ -223,6 +229,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
       <div class="ph grab">
         <span><span class="drag-hint">⠿</span>Memory</span>
         <span id="gpu-mem-badge" class="ph-badge">—</span>
+        <span class="panel-grip">☰</span>
       </div>
       <div class="panel-body">
         <!-- Discrete GPU: VRAM % chart -->
@@ -241,6 +248,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
       <div class="ph grab">
         <span><span class="drag-hint">⠿</span>Tokens / Second</span>
         <span id="tps-peak" class="ph-badge nv">peak —</span>
+        <span class="panel-grip">☰</span>
       </div>
       <div class="panel-body">
         <div class="cw cw120"><canvas id="cTps"></canvas></div>
@@ -253,7 +261,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
 
     <!-- System Resources -->
     <div class="panel" data-id="system">
-      <div class="ph grab"><span><span class="drag-hint">⠿</span>System Resources</span></div>
+      <div class="ph grab"><span><span class="drag-hint">⠿</span>System Resources</span><span class="panel-grip">☰</span></div>
       <div class="panel-body">
         <div class="rb rc-nv"><span class="rb-label">CPU</span><div class="rb-bg"><div class="rb-fill" id="bar-cpu" style="width:0%"></div></div><span class="rb-val" id="val-cpu">—</span></div>
         <div class="rb rc-bl"><span class="rb-label">RAM</span><div class="rb-bg"><div class="rb-fill" id="bar-ram" style="width:0%"></div></div><span class="rb-val" id="val-ram">—</span></div>
@@ -271,6 +279,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
       <div class="ph grab">
         <span><span class="drag-hint">⠿</span>Models in VRAM</span>
         <span id="vram-count" class="ph-badge">0 loaded</span>
+        <span class="panel-grip">☰</span>
       </div>
       <div class="panel-body">
         <div id="vram-models" style="margin-bottom:9px"><span style="color:var(--sub);font-size:.7rem">Querying…</span></div>
@@ -290,11 +299,12 @@ tr:hover td{background:rgba(255,255,255,.02)}
       <div class="ph grab">
         <span><span class="drag-hint">⠿</span>Active Requests</span>
         <span id="active-count-badge" class="ph-badge">0</span>
+        <span class="panel-grip">☰</span>
       </div>
       <div class="panel-body">
         <div class="tw tw-h">
           <table>
-            <thead><tr><th>ID</th><th>Model</th><th>Out</th><th>Think</th><th>TPS</th><th>Elapsed</th><th>TTFT</th></tr></thead>
+            <thead><tr><th>ID</th><th>Model</th><th>Out</th><th>Total</th><th>TPS</th><th>Elapsed</th><th>TTFT</th></tr></thead>
             <tbody id="tbl-active"><tr><td colspan="7" style="text-align:center;color:var(--sub);padding:12px">Idle</td></tr></tbody>
           </table>
         </div>
@@ -302,7 +312,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
           <div style="font-size:.52rem;text-transform:uppercase;letter-spacing:.09em;color:var(--sub);font-weight:700;margin-bottom:4px">Recent Completed</div>
           <div class="tw" style="max-height:120px;overflow-y:auto">
             <table>
-              <thead><tr><th>ID</th><th>Model</th><th>In</th><th>Out</th><th>Think</th><th>TPS</th><th>Dur</th><th>TTFT</th></tr></thead>
+              <thead><tr><th>ID</th><th>Model</th><th>In</th><th>Out</th><th>Total</th><th>TPS</th><th>Dur</th><th>TTFT</th></tr></thead>
               <tbody id="tbl-recent"><tr><td colspan="8" style="text-align:center;color:var(--sub);padding:8px">—</td></tr></tbody>
             </table>
           </div>
@@ -344,7 +354,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
     <div class="kpi bl" style="min-width:105px"><div class="kpi-label">Requests</div><div class="kpi-val" id="hk-reqs">—</div></div>
     <div class="kpi tl" style="min-width:105px"><div class="kpi-label">Input Tokens</div><div class="kpi-val" id="hk-in">—</div></div>
     <div class="kpi yw" style="min-width:105px"><div class="kpi-label">Output Tokens</div><div class="kpi-val" id="hk-out">—</div></div>
-    <div class="kpi pu" style="min-width:105px"><div class="kpi-label">Think Tokens</div><div class="kpi-val" id="hk-think">—</div></div>
+    <div class="kpi pu" style="min-width:105px"><div class="kpi-label">Total Tokens</div><div class="kpi-val" id="hk-total">—</div></div>
     <div class="kpi nv" style="min-width:105px"><div class="kpi-label">Avg Duration</div><div class="kpi-val" id="hk-dur">—</div><div class="kpi-sub">seconds</div></div>
     <div class="kpi rd" style="min-width:105px"><div class="kpi-label">Error Rate</div><div class="kpi-val" id="hk-errrate">—</div></div>
   </div>
@@ -353,7 +363,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
     <div id="hist-no-db" style="display:none;text-align:center;padding:28px;color:var(--sub);font-size:.74rem">MongoDB not connected — history unavailable</div>
     <div class="tw" style="max-height:420px" id="hist-tbl-wrap">
       <table>
-        <thead><tr><th>Time</th><th>Model</th><th>In</th><th>Out</th><th>Think</th><th>TPS</th><th>Dur</th><th>TTFT</th><th>Status</th></tr></thead>
+        <thead><tr><th>Time</th><th>Model</th><th>In</th><th>Out</th><th>Total</th><th>TPS</th><th>Dur</th><th>TTFT</th><th>Status</th></tr></thead>
         <tbody id="tbl-history"></tbody>
       </table>
     </div>
@@ -827,7 +837,7 @@ async function refreshLive() {
     $('kpi-err').textContent   = nf(d.error_count);
     $('kpi-in').textContent    = nf(d.total_input_tokens);
     $('kpi-out').textContent   = nf(d.total_output_tokens);
-    $('kpi-think').textContent = nf(d.total_thinking_tokens);
+    $('kpi-total').textContent = nf(d.total_total_tokens);
     $('kpi-act').textContent   = nf(d.active_requests);
     $('active-count-badge').textContent = d.active_requests||0;
 
@@ -842,8 +852,8 @@ async function refreshLive() {
       ? detail.map(r=>`<tr>
           <td style="color:var(--sub);font-family:var(--mono);font-size:.62rem">${r.id}</td>
           <td style="color:var(--nv)">${r.model||'—'}</td>
-          <td style="font-family:var(--mono)">${nf(r.output_tokens)}</td>
-          <td style="color:var(--purple);font-family:var(--mono)">${nf(r.thinking_tokens)}</td>
+          <td style="font-family:var(--mono)">${nf(r.completion_tokens)}</td>
+          <td style="color:var(--purple);font-family:var(--mono)">${nf(r.total_tokens)}</td>
           <td style="color:var(--blue);font-family:var(--mono)">${(r.tps||0).toFixed(1)}</td>
           <td style="color:var(--yellow);font-family:var(--mono)">${(r.elapsed||0).toFixed(1)}s</td>
           <td style="color:var(--sub);font-family:var(--mono)">${r.ttft?r.ttft.toFixed(0)+'ms':'—'}</td>
@@ -856,8 +866,8 @@ async function refreshLive() {
           <td style="color:var(--sub);font-family:var(--mono);font-size:.6rem">${r.id}</td>
           <td style="color:var(--nv)">${r.model||'—'}</td>
           <td style="font-family:var(--mono)">${nf(r.prompt_tokens)}</td>
-          <td style="font-family:var(--mono)">${nf(r.output_tokens)}</td>
-          <td style="color:var(--purple);font-family:var(--mono)">${nf(r.thinking_tokens)}</td>
+          <td style="font-family:var(--mono)">${nf(r.completion_tokens)}</td>
+          <td style="color:var(--purple);font-family:var(--mono)">${nf(r.total_tokens)}</td>
           <td style="color:var(--blue);font-family:var(--mono)">${(r.tps||0).toFixed(1)}</td>
           <td style="font-family:var(--mono)">${(r.duration||0).toFixed(1)}s</td>
           <td style="color:var(--sub);font-family:var(--mono)">${r.ttft!=null?(r.ttft*1000).toFixed(0)+'ms':'—'}</td>
@@ -927,7 +937,7 @@ async function loadHistory() {
       $('hk-reqs').textContent    = nf(sr.total_requests);
       $('hk-in').textContent      = nf(sr.total_input_tokens);
       $('hk-out').textContent     = nf(sr.total_output_tokens);
-      $('hk-think').textContent   = nf(sr.total_thinking_tokens);
+      $('hk-total').textContent   = nf(sr.total_total_tokens);
       $('hk-dur').textContent     = sr.avg_duration != null ? Number(sr.avg_duration).toFixed(1) : '—';
       $('hk-errrate').textContent = sr.total_requests > 0 ? ((sr.error_count||0)/sr.total_requests*100).toFixed(1)+'%' : '—';
     }
@@ -940,7 +950,7 @@ async function loadHistory() {
             <td style="color:var(--nv)">${r.model||'—'}</td>
             <td style="font-family:var(--mono)">${nf(r.prompt_tokens)}</td>
             <td style="font-family:var(--mono)">${nf(r.completion_tokens)}</td>
-            <td style="color:var(--purple);font-family:var(--mono)">${nf(r.thinking_tokens)}</td>
+            <td style="color:var(--purple);font-family:var(--mono)">${nf(r.total_tokens)}</td>
             <td style="color:var(--blue);font-family:var(--mono)">${(r.tps||0).toFixed(1)}</td>
             <td style="font-family:var(--mono)">${r.duration_secs!=null?Number(r.duration_secs).toFixed(1)+'s':'—'}</td>
             <td style="color:var(--sub);font-family:var(--mono)">${r.ttft_secs!=null?(r.ttft_secs*1000).toFixed(0)+'ms':'—'}</td>
@@ -974,7 +984,7 @@ async function loadUsage() {
       mkChart('cDaily',{type:'bar',data:{labels:lbl,datasets:[
         {label:'Input', data:daily.map(d=>d.total_input_tokens||0),  backgroundColor:'rgba(0,163,224,.7)',borderRadius:2},
         {label:'Output',data:daily.map(d=>d.total_output_tokens||0), backgroundColor:'rgba(118,185,0,.7)',borderRadius:2},
-        {label:'Think', data:daily.map(d=>d.total_thinking_tokens||0),backgroundColor:'rgba(155,89,182,.5)',borderRadius:2},
+        {label:'Total', data:daily.map(d=>d.total_total_tokens||0),backgroundColor:'rgba(155,89,182,.5)',borderRadius:2},
       ]}},{scales:{x:_xOptsBar,y:{..._yOpts(),beginAtZero:true}},plugins:{legend:{display:true,labels:{color:TC,font:{size:9}}}}});
       mkChart('cReqCount',{type:'bar',data:{labels:lbl,datasets:[{label:'Requests',data:daily.map(d=>d.request_count||0),backgroundColor:'rgba(118,185,0,.7)',borderRadius:2}]}},{scales:{x:_xOptsBar,y:{..._yOpts(),beginAtZero:true}}});
     }
