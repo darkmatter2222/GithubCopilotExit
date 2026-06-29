@@ -440,6 +440,10 @@ tr:hover td{background:rgba(255,255,255,.02)}
 <script>
 'use strict';
 
+// ── Base path support (nginx reverse proxy) ───────────────────────────────
+// serve.py injects window.__BASE_PATH = "/copilot" (or "" when running standalone)
+const __bp = typeof window.__BASE_PATH !== 'undefined' ? window.__BASE_PATH : '';
+
 // ── Utilities ─────────────────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
 const nf = (n, d=0) => {
@@ -759,7 +763,7 @@ function updateTpsChart(history, currentTps) {
 // ── VRAM models ───────────────────────────────────────────────────────────
 async function updateVramModels() {
   try {
-    const data = await fetch('/api/models/running').then(r=>r.json());
+    const data = await fetch(__bp + '/api/models/running').then(r=>r.json());
     const models = data.data||[];
     $('vram-count').textContent = `${models.length} loaded`;
     const el = $('vram-models');
@@ -816,7 +820,7 @@ function renderLog() {
 // ── DB check ──────────────────────────────────────────────────────────────
 async function checkDb() {
   try {
-    const r = await fetch('/api/stats/summary?days=1');
+    const r = await fetch(__bp + '/api/stats/summary?days=1');
     const d = await r.json();
     const ok = r.ok && d.total_requests !== undefined;
     $('db-status').textContent = ok ? 'DB ✓' : 'DB ✗';
@@ -829,7 +833,7 @@ let _vramCtr=0;
 async function refreshLive() {
   const dot=$('rdot'); if(dot) dot.classList.add('on');
   try {
-    const d = await fetch('/stats').then(r=>r.json());
+    const d = await fetch(__bp + '/stats').then(r=>r.json());
     $('kpi-tps').textContent   = (d.combined_tps||0).toFixed(1);
     $('kpi-up').textContent    = fUp(d.session_uptime_s);
     $('kpi-reqs').textContent  = nf(d.total_requests);
@@ -888,8 +892,8 @@ async function loadModels() {
   empty.style.display='none';
   try {
     const [mr, rr] = await Promise.all([
-      fetch('/v1/models').then(r=>r.json()),
-      fetch('/api/models/running').then(r=>r.json()).catch(()=>({data:[]}))
+      fetch(__bp + '/v1/models').then(r=>r.json()),
+      fetch(__bp + '/api/models/running').then(r=>r.json()).catch(()=>({data:[]}))
     ]);
     const models=mr.data||[], running=new Set((rr.data||[]).map(m=>m.name));
     $('mk-total').textContent   = models.length;
@@ -927,8 +931,8 @@ function setHistDays(d, btn) {
 async function loadHistory() {
   try {
     const [sr, hr] = await Promise.all([
-      fetch(`/api/stats/summary?days=${_histDays}`).then(r=>r.json()),
-      fetch(`/api/history?days=${_histDays}&limit=200`).then(r=>r.json())
+      fetch(__bp + `/api/stats/summary?days=${_histDays}`).then(r=>r.json()),
+      fetch(__bp + `/api/history?days=${_histDays}&limit=200`).then(r=>r.json())
     ]);
     const noDb = !sr || sr.total_requests === undefined;
     $('hist-no-db').style.display    = noDb ? '' : 'none';
@@ -971,8 +975,8 @@ function setUsageDays(d, btn) {
 async function loadUsage() {
   try {
     const [dr, hr] = await Promise.all([
-      fetch(`/api/usage/daily?days=${_usageDays}`).then(r=>r.json()),
-      fetch(`/api/usage/hourly?days=7`).then(r=>r.json())
+      fetch(__bp + `/api/usage/daily?days=${_usageDays}`).then(r=>r.json()),
+      fetch(__bp + `/api/usage/hourly?days=7`).then(r=>r.json())
     ]);
     const daily=dr.data||[], hourly=hr.data||[];
     const noData = !daily.length && !hourly.length;
@@ -1004,7 +1008,7 @@ function setCostDays(d, btn) {
 }
 async function loadCostPage() {
   try {
-    const s = await fetch(`/api/cost/summary?days=${_costDays}`).then(r=>r.json());
+    const s = await fetch(__bp + `/api/cost/summary?days=${_costDays}`).then(r=>r.json());
     const noData = !s || s.total_requests === undefined;
     $('cost-no-db').style.display = noData ? '' : 'none';
     if (noData) return;
@@ -1028,7 +1032,7 @@ async function loadCostPage() {
         <span style="font-weight:700">Saved vs cloud high</span>
         <span style="color:var(--nv);font-weight:700;font-family:var(--mono)">${f$(s.savings_vs_high||0)}</span>
       </div>`;
-    const dr = await fetch(`/api/cost/daily?days=${_costDays}`).then(r=>r.json());
+    const dr = await fetch(__bp + `/api/cost/daily?days=${_costDays}`).then(r=>r.json());
     const dd = dr.data||[];
     if (dd.length) {
       const lbl = dd.map(d=>d.date.slice(5));
