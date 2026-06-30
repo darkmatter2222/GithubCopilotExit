@@ -46,15 +46,23 @@ echo.
 echo Select GitHub Copilot CLI model:
 echo.
 echo   1. Qwen3 (General purpose, 17 GB)
-echo   2. Qwen3-Coder 27B (Coding specialist)
-echo   3. Qwen3-Coder-Next Q8 (Flagship MoE coder, 85 GB)
-echo   4. Qwen3.6-27B OBLITERATED (Uncensored finetune)
-echo   5. Exit
+echo   2. Qwen3-Coder (Coding specialist, 18 GB)
+echo   3. Qwen3-Coder-Next Q8 (Flagship MoE coder, 84 GB)
+echo   4. Qwen3.6-27B OBLITERATED (Uncensored finetune, 16 GB)
+echo   5. Qwen3.6-27B MTP (MTP variant, 17 GB)
+echo   6. Qwen3-Coder-Spec (Spec decoding ~80 TPS, 18 GB)
+echo   7. Qwen3-Coder-Next-Spec (Spec decoding flagship ~150 TPS, 84 GB)
+echo   8. Qwen3 4B (Small/fast, 2.5 GB)
+echo   9. Exit
 echo.
 
-choice /C 12345 /N /M "Choose a model [1-5]: "
+choice /C 123456789 /N /M "Choose a model [1-9]: "
 
-if errorlevel 5 goto exit
+if errorlevel 9 goto exit
+if errorlevel 8 goto qwen34b
+if errorlevel 7 goto qwen3codernextspec
+if errorlevel 6 goto qwen3coderspec
+if errorlevel 5 goto qwen36mtp
 if errorlevel 4 goto obliterated
 if errorlevel 3 goto qwen3codernext
 if errorlevel 2 goto qwen3coder
@@ -78,6 +86,26 @@ goto launch
 :obliterated
 set COPILOT_MODEL=obliterated
 set MODEL_DISPLAY_NAME=Qwen3.6-27B OBLITERATED
+goto launch
+
+:qwen36mtp
+set COPILOT_MODEL=qwen3.6:27b-mtp-q4_K_M
+set MODEL_DISPLAY_NAME=Qwen3.6-27B MTP (Multi-Token Prediction)
+goto launch
+
+:qwen3coderspec
+set COPILOT_MODEL=qwen3-coder-spec:latest
+set MODEL_DISPLAY_NAME=Qwen3-Coder-Spec (Speculative Decoding ~80 TPS)
+goto launch
+
+:qwen3codernextspec
+set COPILOT_MODEL=qwen3-coder-next-spec:latest
+set MODEL_DISPLAY_NAME=Qwen3-Coder-Next-Spec (Speculative Decoding ~150 TPS)
+goto launch
+
+:qwen34b
+set COPILOT_MODEL=qwen3:4b
+set MODEL_DISPLAY_NAME=Qwen3 4B (Small/Fast)
 goto launch
 
 :launch
@@ -112,7 +140,8 @@ echo To add new models (no proxy code changes needed):
 echo   ssh dgxspark "ollama pull ModelName"
 echo   Then restart this script - model auto-discovers within 30s.
 echo   Current model pool hosted on DGX Spark:
-echo     qwen3, qwen3.6 MTP, qwen3-coder, qwen3-coder-next:q8_0, obliterated
+echo     qwen3, qwen3:4b, qwen3.6 MTP, qwen3-coder, qwen3-coder-spec,
+echo     qwen3-coder-next:q8_0, qwen3-coder-next-spec, obliterated
 echo.
 echo Voice usage after /voice is enabled:
 echo   Hold Spacebar to talk, release to insert transcription.

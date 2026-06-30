@@ -41,9 +41,9 @@ No code changes are ever needed to add, remove, or swap models.
 
 The LLM dashboard can be served remotely behind an nginx reverse proxy (e.g., `susman-ingress` on databrick at `192.168.86.48`) accessible via `https://susmannet.duckdns.org/copilot/`.
 
-**Data flow:** Browser → nginx (`/copilot/`) → serve.py (:3000) → DGX Spark proxy (:8001).
+**Data flow:** Browser → nginx (`/copilot/`) → serve.py (:3002) → gcopilot-proxy container (:8001) → Ollama on DGX Spark (:11434).
 - **PROXY_PATH_PREFIX=/copilot** — injected into HTML as `window.__BASE_PATH` so browser `pFetch()` calls hit the correct nginx location block (`/copilot/stats`, `/copilot/v1/models`, etc.)
-- **PROXY_BACKEND=http://192.168.86.39:8001** — serve.py server-side proxy target (use IP hostname `dgxspark` is not resolvable from the separate host).
+- **PROXY_BACKEND=http://gcopilot-proxy:8001** — serve.py server-side proxy target. Uses Docker container name (both containers on `docucraft_docucraft-network`). Do NOT use the DGX Spark IP here — gcopilot-proxy runs on Databricks, not DGX Spark.
 - Nginx upstream needs `resolver 127.0.0.11;` (Docker embedded DNS) to resolve container names on shared networks.
 
 ### Data & MongoDB
@@ -261,16 +261,24 @@ ssh dgxspark "ollama rm old-model-name"
 ### Remote dashboard behind nginx ingress (databrick)
 
 ```bash
-# Build image on databrick
-ssh 192.168.86.48 "cd /tmp/dashboard-build && docker build -t gcopilot-dashboard ."
+# Build image on databrick (run from ~/GithubCopilotExit/dashboard/)
+cd ~/GithubCopilotExit/dashboard
+docker build --no-cache -f Dockerfile.deploy -t gcopilot-dashboard .
 
 # Restart with correct env vars
 docker stop gcopilot-dashboard && docker rm gcopilot-dashboard
 docker run -d --name gcopilot-dashboard \
+  --restart unless-stopped \
   --network docucraft_docucraft-network \
-  -e PROXY_BACKEND=http://192.168.86.39:8001 \
+  -p 3002:3002 \
+  -e PROXY_BACKEND=http://gcopilot-proxy:8001 \
+  -e PROXY_API_KEY=<key from PROXY_API_KEYS in .env> \
+  -e ADMIN_USERNAME=darkmatter2222 \
+  -e ADMIN_PASSWORD=<admin password> \
+  -e DASHBOARD_USERNAME=darkmatter2222 \
+  -e DASHBOARD_PASSWORD=<dashboard password> \
+  -e DASHBOARD_PORT=3002 \
   -e PROXY_PATH_PREFIX=/copilot \
-  -e DASHBOARD_PORT=3000 \
   gcopilot-dashboard
 
 # Reload nginx (config must have "resolver 127.0.0.11;" for Docker DNS)
@@ -354,7 +362,12 @@ Browser → nginx /copilot/ → serve.py:3002 → DGX Spark :8001
      --restart unless-stopped \
      --network docucraft_docucraft-network \
      -p 3002:3002 \
-     -e PROXY_BACKEND=http://192.168.86.39:8001 \
+     -e PROXY_BACKEND=http://gcopilot-proxy:8001 \
+     -e PROXY_API_KEY=<key from PROXY_API_KEYS in .env> \
+     -e ADMIN_USERNAME=darkmatter2222 \
+     -e ADMIN_PASSWORD=<admin password> \
+     -e DASHBOARD_USERNAME=darkmatter2222 \
+     -e DASHBOARD_PASSWORD=<dashboard password> \
      -e DASHBOARD_PORT=3002 \
      -e PROXY_PATH_PREFIX=/copilot \
      gcopilot-dashboard
@@ -365,7 +378,7 @@ Browser → nginx /copilot/ → serve.py:3002 → DGX Spark :8001
 - **Use `PROXY_BACKEND`** not `PROXY_URL` — wrong var causes 502 errors
 - **Use `docucraft_docucraft-network`** not `--network host` — nginx Docker DNS resolves container name
 - **Always `--no-cache` on build** — cached layers ignore code changes
-- **JS fetch calls must use `__bp + '/path'`** — hardcoded paths break behind nginx `/copilot/ prefix
+- **JS fetch calls must use `pFetch('/path')`** — hardcoded paths or `fetch(__bp + '/path')` break behind nginx `/copilot/` prefix (`__bp` is undefined; always use `pFetch`)
 - **serve.py must normalize paths** — `_norm_path = self.path.split("?")[0]` before routing
 
 ### Extensions

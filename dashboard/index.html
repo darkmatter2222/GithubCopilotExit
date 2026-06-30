@@ -1321,9 +1321,8 @@ function setUsageDays(d, btn) {
 async function loadUsage() {
   try {
     const [dr, hr] = await Promise.all([
-      fetch(__bp + `/api/usage/daily?days=${_usageDays}`).then(r=>r.json()),
-      fetch(__bp + `/api/usage/hourly?days=7`).then(r=>r.json())
-
+      pFetch(`/api/usage/daily?days=${_usageDays}`).then(r=>r.json()),
+      pFetch(`/api/usage/hourly?days=7`).then(r=>r.json())
     ]);
     const daily=dr.data||[], hourly=hr.data||[];
     const noData = !daily.length && !hourly.length;
@@ -1355,7 +1354,7 @@ function setCostDays(d, btn) {
 }
 async function loadCostPage() {
   try {
-    const s = await fetch(__bp + `/api/cost/summary?days=${_costDays}`).then(r=>r.json());
+    const s = await pFetch(`/api/cost/summary?days=${_costDays}`).then(r=>r.json());
 
     const noData = !s || s.total_requests === undefined;
     $('cost-no-db').style.display = noData ? '' : 'none';
@@ -1380,7 +1379,7 @@ async function loadCostPage() {
         <span style="font-weight:700">Saved vs cloud high</span>
         <span style="color:var(--nv);font-weight:700;font-family:var(--mono)">${f$(s.savings_vs_high||0)}</span>
       </div>`;
-    const dr = await fetch(__bp + `/api/cost/daily?days=${_costDays}`).then(r=>r.json());
+    const dr = await pFetch(`/api/cost/daily?days=${_costDays}`).then(r=>r.json());
 
     const dd = dr.data||[];
     if (dd.length) {
