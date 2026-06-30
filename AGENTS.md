@@ -149,13 +149,15 @@ ssh dgxspark "df -h /"  # Need ~85 GB free for qwen3-coder-next:q8_0
 | 3 | `qwen3-coder-next:q8_0` | qwen3-coder-next:q8_0 | 84 GB | 80B (3B active) | MoE Q8_0 | Feb 2026 | **~74%** (SOTA open) | ~94% (Qwen3-Coder family) | 131K | ~25 gen / ~150 prompt | ~8s | **Flagship** — best agentic coder, 512 experts |
 | 4 | `obliterated` | obliterated:latest | 16 GB | 26.9B | Dense Q4_K_M | Apr 2026 (finetune) | ~73% (base Qwen3.6-27B OBLITERATED) | ~88% (same as base) | 131K | ~40 gen / ~219 prompt | ~3s | Uncensored finetune, refusal circuits removed |
 | _(parent)_ | `hf.co/OBLITERATUS/Qwen3.6-27B-OBLITERATED:Q4_K_M` | Same as obliterated | 16 GB | 26.9B | Dense Q4_K_M | Apr 2026 (finetune) | Same | Same | 131K | Same | Same | Parent model — `obliterated` alias wraps this |
+| 5 (spec) | `qwen3-coder-spec:latest` | qwen3-coder-spec:latest | 18 GB | 30.5B | MoE Q4_K_M + spec draft | Jul 2025 | ~45% (30B-A3B) | SOTA for size class | 131K | ~35 gen / ~190 prompt | ~4s | qwen3-coder wrapper with `draft_num_predict=4` — speculative decoding ready (requires MTP tensors in base model) |
+| 6 (spec) | `qwen3-coder-next-spec:latest` | qwen3-coder-next-spec:latest | 84 GB | 80B (3B active) | MoE Q8_0 + spec draft | Feb 2026 | ~74% (SOTA open) | ~94% | 131K | ~25 gen / ~150 prompt | ~8s | qwen3-coder-next wrapper with `draft_num_predict=4` — same flagship quality, spec-tuned params |
 
 **Notes:**
 - **TTFT** = Time to First Token (estimated on GB10 with warm cache; first call after load adds ~5-30s)
 - **TPS** = Tokens Per Second (GB10: 122 GB unified LPDDR5x, native FP4 Blackwell support)
 - SWE-bench % shows Verified split for open models; Qwen3-Coder-Next leads all open models
 - Only one model can be loaded in VRAM at a time — Ollama auto-evicts on model swap
-- Total storage: ~168 GB across all 5 unique models (qwen3 and qwen3.6 MTP share some blobs)
+- Total storage: ~295 GB across all 9 model aliases (spec models share base model blobs, qwen3 and qwen3.6 MTP share some blobs)
 
 ### Model Loading Behavior
 When you switch models (e.g., from `qwen3` to `qwen3-coder-next:q8_0`):

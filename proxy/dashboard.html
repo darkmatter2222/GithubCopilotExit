@@ -1081,6 +1081,16 @@ function renderModelsTable(models) {
     } else {
       nameSub = '<span class="models-badge-inline base-tag">base</span>';
     }
+    
+    // Add specific model identifier to help users know what to use in Copilot
+    if (m.is_alias) {
+      // For aliases, include the actual alias they'd use
+      const displayName = m.id.replace(/:.+$/, '');
+      nameSub += '<br><span class="models-badge-inline copy-tag">Use as: <code>' + m.id + '</code></span>';
+    } else {
+      // For base models, include how to reference them
+      nameSub += '<br><span class="models-badge-inline copy-tag">Reference with: <code>' + m.id + '</code></span>';
+    }
     const vramDot = m.is_loaded ? '<span class="vram-dot" title="Loaded in VRAM">\u25cf</span> ' : '';
     const upd = _modelUpdateState[m.id];
     let updateHtml = '';
