@@ -242,7 +242,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
     <!-- GPU Utilization -->
     <div class="panel" data-id="gpu-util">
       <div class="ph grab">
-        <span><span class="drag-hint">⠿</span>GPU Utilization</span>
+        <span><span class="drag-hint">⠿</span>CPU / GPU Utilization</span>
         <span id="gpu-temp-badge" class="ph-badge">—</span>
         <span class="panel-grip">☰</span>
       </div>
@@ -266,7 +266,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
         <div class="cw cw120" id="gpu-ram-chart-wrap" style="display:none"><canvas id="cRam"></canvas></div>
         <div id="gpu-mem-bar" style="margin-top:6px"></div>
         <div id="gpu-mem-note" style="font-size:.6rem;color:var(--sub);margin-top:4px;display:none">
-          GB10 unified architecture — GPU shares system RAM (122 GB LPDDR5x)
+          Unified memory — system RAM shared between CPU and GPU workloads
         </div>
       </div>
     </div>
@@ -896,8 +896,13 @@ function updateSysbar(sys) {
   setBar('bar-cpu','val-cpu', sys.cpu_percent, sys.cpu_percent != null ? sys.cpu_percent+'%' : '—');
   setBar('bar-ram','val-ram', sys.ram_percent, sys.ram_total_gb ? `${sys.ram_used_gb}/${sys.ram_total_gb}GB` : '—');
   setBar('bar-disk','val-disk', sys.disk_percent, sys.disk_total_gb ? `${sys.disk_used_gb}/${sys.disk_total_gb}GB` : '—');
-  collectPt(sys.gpus, sys.ram_percent);
-  if (sys.gpus?.length) updateGpuCharts(sys.gpus, sys.ram_percent);
+  // When no GPU is present, synthesize an entry from CPU% so the utilization and
+  // memory charts still show meaningful data (CPU util% + system RAM%).
+  const gpus = sys.gpus?.length ? sys.gpus
+    : sys.cpu_percent != null ? [{name:'CPU', util_percent: sys.cpu_percent, mem_used_mb:0, mem_total_mb:0}]
+    : [];
+  collectPt(gpus, sys.ram_percent);
+  if (gpus.length) updateGpuCharts(gpus, sys.ram_percent);
   if (sys.ollama_models) renderDiskModels(sys.ollama_models);
 }
 
