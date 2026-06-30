@@ -544,8 +544,6 @@ If this saved you from cloud API costs or gave you peace of mind about privacy, 
 - Employs a verification process to validate or correct candidates
 - Significantly reduces time-to-first-token and overall token generation rate
 
-![DSpark Architecture](https://user-images.githubusercontent.com/265813/293442884-7c7c0a2d-240f-45d6-bd0b-8e9e4c86c911.png)
-
 ### Performance Benchmarks
 
 **Throughput Comparison (DGX Spark - 122 GB unified memory):**
