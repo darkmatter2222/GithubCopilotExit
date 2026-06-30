@@ -93,6 +93,19 @@ tracker = TokenTracker()
 session_db = SessionDB()
 set_db(session_db)
 
+# GPU stats service — runs on DGX Spark (port 11435) when proxy is remote (Databricks).
+# Auto-derived from OLLAMA_BASE_URL if not explicitly set: replace :11434 → :11435.
+_ollama_base = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+GPU_STATS_URL: str = os.environ.get(
+    "GPU_STATS_URL",
+    _ollama_base.replace(":11434", ":11435") + "/gpu-stats"
+    if ":11434" in _ollama_base and "localhost" not in _ollama_base
+    else "",
+)
+# Override total GPU VRAM (MB) reported when Ollama /api/ps is the only source.
+# GB10 Grace Blackwell = 122 GB unified memory → 124928 MB.
+GPU_MEM_TOTAL_MB: int = int(os.environ.get("GPU_MEM_TOTAL_MB", "0"))
+
 # System stats cache (refreshed every 5s to avoid expensive subprocess calls)
 _sys_cache: dict = {}
 _sys_cache_ts: float = 0.0
@@ -293,36 +306,84 @@ async def get_system_stats() -> dict:
     except Exception as exc:
         log.warning("psutil failed: %s", exc)
 
-    # GPU via nvidia-smi
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "nvidia-smi",
-            "--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu",
-            "--format=csv,noheader,nounits",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, _ = await proc.communicate()
-        gpus = []
-        for line in stdout.decode().strip().splitlines():
-            parts = [p.strip() for p in line.split(",")]
-            if len(parts) >= 5:
-                def _i(s: str) -> int:
-                    c = s.strip().strip("[]")
-                    return int(float(c)) if c and c.upper() not in ("N/A", "") else 0
-                gpus.append({
-                    "name": parts[0],
-                    "util_percent": _i(parts[1]),
-                    "mem_used_mb": _i(parts[2]),
-                    "mem_total_mb": _i(parts[3]),
-                    "temp_c": _i(parts[4]),
-                })
-        result["gpus"] = gpus
-    except Exception as exc:
-        log.debug("nvidia-smi unavailable: %s", exc)
-        result["gpus"] = []
+    # ── GPU stats — three sources in priority order ────────────────────────────
+    # 1. Remote GPU stats service (gpu_stats_server.py on DGX Spark, port 11435)
+    #    → Real nvidia-smi data: util%, VRAM used/total, temperature
+    # 2. Local nvidia-smi (only works when proxy runs on a machine with a GPU)
+    #    → Same real data, used when proxy is co-located with the GPU
+    # 3. Ollama /api/ps fallback
+    #    → Reports VRAM consumed by the loaded model (no real-time util%)
+    #    → Binary: 100% util when model loaded, 0% when idle
 
-    # Ollama loaded models
+    gpus_result: list = []
+
+    # Source 1: Remote GPU stats service
+    if GPU_STATS_URL and not gpus_result:
+        try:
+            async with httpx.AsyncClient(timeout=3) as client:
+                r = await client.get(GPU_STATS_URL)
+            if r.status_code == 200:
+                gpus_result = r.json().get("gpus", [])
+        except Exception as exc:
+            log.debug("GPU stats service unavailable (%s): %s", GPU_STATS_URL, exc)
+
+    # Source 2: Local nvidia-smi
+    if not gpus_result:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "nvidia-smi",
+                "--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu",
+                "--format=csv,noheader,nounits",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await proc.communicate()
+
+            def _i(s: str) -> int:
+                c = s.strip().strip("[]")
+                try:
+                    return int(float(c)) if c and c.upper() not in ("N/A", "") else 0
+                except ValueError:
+                    return 0
+
+            for line in stdout.decode().strip().splitlines():
+                parts = [p.strip() for p in line.split(",")]
+                if len(parts) >= 5:
+                    gpus_result.append({
+                        "name": parts[0],
+                        "util_percent": _i(parts[1]),
+                        "mem_used_mb": _i(parts[2]),
+                        "mem_total_mb": _i(parts[3]),
+                        "temp_c": _i(parts[4]),
+                    })
+        except Exception as exc:
+            log.debug("nvidia-smi unavailable: %s", exc)
+
+    # Source 3: Ollama /api/ps — modern Ollama (v0.3+) uses size_vram (bytes)
+    # No processor/mem_used fields; util is binary (loaded=100%, not loaded=0%)
+    if not gpus_result:
+        try:
+            ollama_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+            async with httpx.AsyncClient(timeout=5) as client:
+                r = await client.get(f"{ollama_url}/api/ps")
+            if r.status_code == 200:
+                mem_total_mb = GPU_MEM_TOTAL_MB or 0
+                for model in r.json().get("models", []):
+                    size_vram = model.get("size_vram", 0)
+                    if size_vram and size_vram > 0:
+                        gpus_result.append({
+                            "name": "GPU (DGX Spark)",
+                            "util_percent": 100,
+                            "mem_used_mb": size_vram // (1024 * 1024),
+                            "mem_total_mb": mem_total_mb,
+                            "temp_c": 0,
+                        })
+        except Exception as exc:
+            log.debug("Ollama /api/ps unavailable: %s", exc)
+
+    result["gpus"] = gpus_result
+
+    # Ollama model listing (separate from running models for disk display)
     try:
         ollama_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
         async with httpx.AsyncClient(timeout=5) as client:

@@ -1,0 +1,15 @@
+[Unit]
+Description=GPU Stats HTTP Server (for gcopilot-proxy)
+Documentation=https://github.com/darkmatter2222/GithubCopilotExit
+After=network.target
+
+[Service]
+Type=simple
+User=darkmatter2222
+ExecStart=/usr/bin/python3 /home/darkmatter2222/gpu_stats_server.py
+Restart=always
+RestartSec=5
+Environment=GPU_STATS_PORT=11435
+
+[Install]
+WantedBy=multi-user.target

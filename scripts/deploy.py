@@ -117,6 +117,9 @@ def main():
     proxy_keys  = env.get("PROXY_API_KEYS", "")
     admin_user  = env.get("ADMIN_USERNAME", "")
     admin_pass  = env.get("ADMIN_PASSWORD", "")
+    # GPU stats service on DGX Spark; auto-derived from OLLAMA_BASE_URL if not set
+    gpu_stats_url = env.get("GPU_STATS_URL", "")
+    gpu_mem_total = env.get("GPU_MEM_TOTAL_MB", "124928")
 
     host = _ssh_host()
     print(f"\nTarget  : {host} (Databricks)")
@@ -166,6 +169,10 @@ def main():
         env_flags += f' -e MONGO_URI="{mongo_uri}" -e MONGO_DB={mongo_db}'
     if vllm_url:
         env_flags += f" -e VLLM_BASE_URL={vllm_url}"
+    if gpu_stats_url:
+        env_flags += f" -e GPU_STATS_URL={gpu_stats_url}"
+    if gpu_mem_total:
+        env_flags += f" -e GPU_MEM_TOTAL_MB={gpu_mem_total}"
 
     ssh(
         f"docker run -d --name {CONTAINER_NAME} "

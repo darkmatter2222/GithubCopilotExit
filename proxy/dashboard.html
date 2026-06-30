@@ -242,7 +242,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
     <!-- GPU Utilization -->
     <div class="panel" data-id="gpu-util">
       <div class="ph grab">
-        <span><span class="drag-hint">⠿</span>CPU / GPU Utilization</span>
+        <span><span class="drag-hint">⠿</span>GPU Utilization</span>
         <span id="gpu-temp-badge" class="ph-badge">—</span>
         <span class="panel-grip">☰</span>
       </div>
@@ -896,11 +896,9 @@ function updateSysbar(sys) {
   setBar('bar-cpu','val-cpu', sys.cpu_percent, sys.cpu_percent != null ? sys.cpu_percent+'%' : '—');
   setBar('bar-ram','val-ram', sys.ram_percent, sys.ram_total_gb ? `${sys.ram_used_gb}/${sys.ram_total_gb}GB` : '—');
   setBar('bar-disk','val-disk', sys.disk_percent, sys.disk_total_gb ? `${sys.disk_used_gb}/${sys.disk_total_gb}GB` : '—');
-  // When no GPU is present, synthesize an entry from CPU% so the utilization and
-  // memory charts still show meaningful data (CPU util% + system RAM%).
-  const gpus = sys.gpus?.length ? sys.gpus
-    : sys.cpu_percent != null ? [{name:'CPU', util_percent: sys.cpu_percent, mem_used_mb:0, mem_total_mb:0}]
-    : [];
+  // GPU charts — only populate when real GPU data is available.
+  // CPU% is shown in the system bars above; never synthesize a CPU entry here.
+  const gpus = sys.gpus ?? [];
   collectPt(gpus, sys.ram_percent);
   if (gpus.length) updateGpuCharts(gpus, sys.ram_percent);
   if (sys.ollama_models) renderDiskModels(sys.ollama_models);

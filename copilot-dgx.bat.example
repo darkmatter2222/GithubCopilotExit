@@ -51,16 +51,18 @@ echo   3. Qwen3-Coder-Next Q8 (Flagship MoE coder, 84 GB)
 echo   4. Qwen3.6-27B OBLITERATED (Uncensored finetune, 16 GB)
 echo   5. Qwen3.6-27B MTP (MTP variant, 17 GB)
 echo   6. Qwen3-Coder-Spec (Spec decoding ~80 TPS, 18 GB)
-echo   7. Qwen3-Coder-Next-Spec (Spec decoding flagship ~150 TPS, 84 GB)
-echo   8. Qwen3 4B (Small/fast, 2.5 GB)
-echo   9. Exit
+echo   7. Qwen3-Coder-Next-Spec 32K (Daily coding, fast load, 84 GB)   ^<-- RECOMMENDED
+echo   8. Qwen3-Coder-Next-Spec Full (Long context 262K, 84 GB)
+echo   9. Qwen3 4B (Small/fast, 2.5 GB)
+echo   0. Exit
 echo.
 
-choice /C 123456789 /N /M "Choose a model [1-9]: "
+choice /C 1234567890 /N /M "Choose a model [1-9, 0=exit]: "
 
-if errorlevel 9 goto exit
-if errorlevel 8 goto qwen34b
-if errorlevel 7 goto qwen3codernextspec
+if errorlevel 10 goto exit
+if errorlevel 9 goto qwen34b
+if errorlevel 8 goto qwen3codernextspecfull
+if errorlevel 7 goto qwen3codernextspec32k
 if errorlevel 6 goto qwen3coderspec
 if errorlevel 5 goto qwen36mtp
 if errorlevel 4 goto obliterated
@@ -98,9 +100,14 @@ set COPILOT_MODEL=qwen3-coder-spec:latest
 set MODEL_DISPLAY_NAME=Qwen3-Coder-Spec (Speculative Decoding ~80 TPS)
 goto launch
 
-:qwen3codernextspec
+:qwen3codernextspec32k
+set COPILOT_MODEL=qwen3-coder-next-spec-32k:latest
+set MODEL_DISPLAY_NAME=Qwen3-Coder-Next-Spec 32K (Daily Coding, 32K ctx)
+goto launch
+
+:qwen3codernextspecfull
 set COPILOT_MODEL=qwen3-coder-next-spec:latest
-set MODEL_DISPLAY_NAME=Qwen3-Coder-Next-Spec (Speculative Decoding ~150 TPS)
+set MODEL_DISPLAY_NAME=Qwen3-Coder-Next-Spec Full (Long Context 262K)
 goto launch
 
 :qwen34b
