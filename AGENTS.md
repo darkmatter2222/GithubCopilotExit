@@ -82,12 +82,13 @@ Host dgxspark
 |---|---|---|---|---|
 | qwen3 / obliterated / qwen3.6 MTP (27B dense, Q4) | ~219 | ~40 | 66/66 | Baseline — warm cache on GB10 |
 | qwen3-coder (30.5B MoE, Q4) | ~190 | ~35 | 64/64 | Slightly slower due to MoE routing overhead |
-| **qwen3-coder-next **(80B MoE, Q8) | **~150** | **~25** | 48/48 | Larger model, higher precision — cold start from disk: ~5 min (warm: <2s) |
+| **qwen3-coder-next** (80B `qwen3next` hybrid, Q8) | **~200** | **~39** | 49/49 | **Measured 39.4 gen / 203 prompt TPS** — hybrid SSM architecture; cold start ~4 min (warm: <2s) |
 
 - **GPU**: CUDA0, all layers offloaded regardless of model (122 GB handles everything)
 - **Blackwell FP4**: native support enabled (`BLACKWELL_NATIVE_FP4=1`)
 - **TTFT** = Time to First Token — increases with quantization level and model size
-- **80B cold start**: qwen3-coder-next loads in ~5 minutes from NVMe; warm (in VRAM) responds in <2s. nginx `proxy_read_timeout` is set to 600s to accommodate this.
+- **80B cold start**: qwen3-coder-next (`qwen3next` arch) loads in ~4 minutes from NVMe; warm (in VRAM) responds in <2s. nginx `proxy_read_timeout` is set to 600s to accommodate this.
+- **Why qwen3-coder-next is fast**: uses the `qwen3next` hybrid architecture — 75% Gated DeltaNet (linear-complexity SSM layers) + 25% Gated Attention. SSM layers scale O(1) per token vs O(n) for attention, producing ~39 TPS at 80B parameters.
 - Models stay cached in VRAM for ~5 min idle before eviction; next switch triggers reload
 
 ---
@@ -147,11 +148,11 @@ ssh dgxspark "df -h /"  # Need ~85 GB free for qwen3-coder-next:q8_0
 | 1 | `qwen3` | qwen3:latest | 17 GB | 27.3B | Dense Q4_K_M | Apr 29, 2025 | ~49% (35B-A3B sibling) | ~88% (Qwen3 family) | 131K | ~40 gen / ~219 prompt | ~3s | General purpose, dual-mode thinking |
 | _(hidden)_ | `qwen3.6:27b-mtp-q4_K_M` | qwen3.6:27b-mtp-q4_K_M | 17 GB | 27.3B | Dense Q4_K_M + MTP | Apr 29, 2025 | ~73% (35B-A3B sibling) | ~88% | N/A | Similar to qwen3 | Similar | MTP variant — parent of `qwen3` alias |
 | 2 | `qwen3-coder` | qwen3-coder:latest | 18 GB | 30.5B | MoE Q4_K_M | Jul 2025 | ~45% (30B-A3B) | SOTA for size class | 131K | ~35 gen / ~190 prompt | ~4s | Coding specialist, agentic tool calling |
-| 3 | `qwen3-coder-next:q8_0` | qwen3-coder-next:q8_0 | 84 GB | 80B (3B active) | MoE Q8_0 | Feb 2026 | **~74%** (SOTA open) | ~94% (Qwen3-Coder family) | 131K | ~25 gen / ~150 prompt | ~8s | **Flagship** — best agentic coder, 512 experts |
+| 3 | `qwen3-coder-next:q8_0` | qwen3-coder-next:q8_0 | 84 GB | 80B (3B active) | `qwen3next` hybrid Q8_0 | Feb 2026 | **~74%** (SOTA open) | ~94% (Qwen3-Coder family) | 262K | **~39 gen / ~200 prompt** | ~4 min cold | **Flagship** — hybrid SSM+MoE arch; 512 experts; inherently fast due to Gated DeltaNet SSM layers |
 | 4 | `obliterated` | obliterated:latest | 16 GB | 26.9B | Dense Q4_K_M | Apr 2026 (finetune) | ~73% (base Qwen3.6-27B OBLITERATED) | ~88% (same as base) | 131K | ~40 gen / ~219 prompt | ~3s | Uncensored finetune, refusal circuits removed |
 | _(parent)_ | `hf.co/OBLITERATUS/Qwen3.6-27B-OBLITERATED:Q4_K_M` | Same as obliterated | 16 GB | 26.9B | Dense Q4_K_M | Apr 2026 (finetune) | Same | Same | 131K | Same | Same | Parent model — `obliterated` alias wraps this |
-| 5 (spec) | `qwen3-coder-spec:latest` | qwen3-coder-spec:latest | 18 GB | 30.5B | MoE Q4_K_M | Jul 2025 | ~45% (30B-A3B) | SOTA for size class | inherited | ~35 gen / ~190 prompt | ~20s cold | qwen3-coder alias with custom system prompt and tuned sampling params. No spec decoding (models lack MTP tensors). |
-| 6 (spec) | `qwen3-coder-next-spec:latest` | qwen3-coder-next-spec:latest | 84 GB | 80B (3B active) | MoE Q8_0 | Feb 2026 | ~74% (SOTA open) | ~94% | inherited | ~25 gen / ~150 prompt | ~5 min cold | qwen3-coder-next alias with custom system prompt. No spec decoding (models lack MTP tensors). Same flagship quality. |
+| 5 (spec) | `qwen3-coder-spec:latest` | qwen3-coder-spec:latest | 18 GB | 30.5B | MoE Q4_K_M | Jul 2025 | ~45% (30B-A3B) | SOTA for size class | inherited | ~35 gen / ~190 prompt | ~20s cold | qwen3-coder alias with custom system prompt and tuned sampling params. Same performance as base model. |
+| 6 (spec) | `qwen3-coder-next-spec:latest` | qwen3-coder-next-spec:latest | 84 GB | 80B (3B active) | `qwen3next` hybrid Q8_0 | Feb 2026 | ~74% (SOTA open) | ~94% | 262K | **~39 gen / ~200 prompt** | ~4 min cold | qwen3-coder-next alias with custom system prompt. Same hybrid SSM architecture, same flagship performance. |
 
 - **TTFT** = Time to First Token (estimated on GB10 with warm cache)
 - **Cold start**: small models (≤18GB) ~5-30s; 80B model ~5 minutes from NVMe SSD. nginx `proxy_read_timeout 600s` accommodates this.
@@ -160,30 +161,40 @@ ssh dgxspark "df -h /"  # Need ~85 GB free for qwen3-coder-next:q8_0
 - Only one model can be loaded in VRAM at a time — Ollama auto-evicts on model swap
 - Total storage: ~295 GB across all 9 model aliases (spec models share base model blobs, qwen3 and qwen3.6 MTP share some blobs)
 
-## DeepSeek DSpark Speculative Decoding Enhancement
+## qwen3next Architecture — Why It's Fast
 
-**DeepSeek's DSpark** framework provides a breakthrough in LLM inference performance acceleration, delivering **up to 400% throughput improvements** for production use cases.
+The `qwen3-coder-next` model (and its `-spec` alias) use the **`qwen3next` hybrid architecture**:
 
-### Performance Characteristics
-- **qwen3-coder-spec:** Achieves up to **~80 tokens/second** during coding tasks on our DGX Spark system
-- **qwen3-coder-next-spec:** Delivers up to **~150 tokens/second** during coding tasks on our DGX Spark system
-- These performance gains are achieved through speculative decoding where a draft model predicts multiple candidate tokens and a full target model verifies them
+- **75% Gated DeltaNet layers** — linear-complexity SSM (State Space Model) layers. These scale O(1) per token generation instead of O(n) for attention, making generation dramatically faster as sequence length grows.
+- **25% Gated Attention layers** — standard transformer attention for global context.
+- **512-expert MoE** — only ~10+1 experts active per token (3B active of 80B total).
+- **Native context**: 262K tokens (Ollama exposes as 131K; llama-server uses 262K internally).
 
-### How DSpark Works
-DeepSeek DSpark uses a semi-autoregressive draft model approach with confidence-scheduled verification that maximizes GPU occupancy and minimizes latency. The framework supports multiple model families including Qwen, Gemma, and DeepSeek V4 platforms.
+**Measured performance on DGX Spark (GB10):**
+- Generation: **~39 TPS** (warm, VRAM cached)
+- Prompt processing: **~200 TPS** (warm)
+- Cold start: **~4 minutes** from NVMe SSD (first call after eviction)
+- Warm responses: **<2 seconds**
 
-### Key Benefits
-1. **Increased Throughput:** Speculative decoding can boost raw tokens/second by 50-400% depending on task and hardware
-2. **Cost Efficiency:** Reduces compute costs per output token
-3. **No Quality Loss:** Maintains model accuracy while achieving substantial speedups
-4. **Production Ready:** Successfully deployed in real-world production environments
+The fast TPS is the SSM architecture working as designed — NOT speculative decoding. Traditional speculative decoding (`draft_num_predict`, `draft-mtp`) is not available through Ollama for this model:
+- Ollama ignores `draft_num_predict` for GGUF models (the parameter is silently dropped)
+- `llama-server --spec-type draft-mtp` fails for this GGUF with `failed to measure MTP context memory`
+- True `qwen3_next_mtp` speculative decoding (available in vLLM) could potentially push ~80-150 TPS but requires vLLM deployment
 
-### System Impact
-Our DGX Spark implementation demonstrates the significant performance gains possible with DSpark speculative decoding:
-- qwen3-coder-spec (18GB, 30.5B MoE): ~80 tokens/second on our system  
-- qwen3-coder-next-spec (84GB, 80B MoE Q8): ~150 tokens/second on our system
+**Why the "-spec" Modelfiles exist:** They are Ollama aliases wrapping the base model blob with a coding-focused system prompt and tuned sampling parameters (temperature 0.6). They share the exact same GGUF blob — no additional storage or inference overhead.
 
-**Note:** The spec models originally used `draft_num_predict=4` which caused generation to hang indefinitely (Ollama tries to initialize speculative decoding but qwen3-coder/qwen3-coder-next do not have embedded MTP tensors). This parameter was **removed** in June 2026. The spec models now function identically to their base models with a different system prompt and sampling parameters. If MTP tensors are available in future model releases, `draft_num_predict` can be re-added to the Modelfile to enable true speculative decoding.
+### nginx Timeout Requirement
+
+The 80B cold-start (~4 min) exceeds nginx's default 300s `proxy_read_timeout`. **All nginx location blocks serving model requests must have `proxy_read_timeout 600s`** — see `nginx/current_nginx.conf`.
+
+Without this, requests to qwen3-coder-next-spec appear to hang forever (nginx kills the connection at 300s, right before the model finishes loading).
+
+### What Would Enable True MTP Speculative Decoding
+
+For actual speculative decoding with qwen3next's SSM draft mechanism:
+1. **vLLM**: `--speculative-config '{"method": "qwen3_next_mtp", "num_speculative_tokens": 4}'`
+2. A newer Ollama version that auto-detects qwen3next and enables `draft-mtp` in llama-server
+3. The `qwen3-coder-next` GGUF currently does NOT have embedded `nextn.*` MTP head tensors; the SSM speed benefit is intrinsic to the architecture, not a separate draft model
 
 ### Model Loading Behavior
 When you switch models (e.g., from `qwen3` to `qwen3-coder-next:q8_0`):
@@ -191,7 +202,7 @@ When you switch models (e.g., from `qwen3` to `qwen3-coder-next:q8_0`):
 2. Ollama detects the model is not in VRAM and begins loading
 3. First response has a **cold start delay**:
    - Small models (≤18GB): ~5–30 seconds
-   - 80B model (qwen3-coder-next): **~5 minutes** (84GB from NVMe SSD)
+   - 80B model (qwen3-coder-next): **~4 minutes** (84GB from NVMe SSD)
 4. Subsequent requests hit **hot cache** — full speed (warm responses <2s)
 5. Model stays in VRAM for ~5 min of idle time before eviction
 6. nginx `proxy_read_timeout` is set to **600s** to accommodate the 80B cold start
