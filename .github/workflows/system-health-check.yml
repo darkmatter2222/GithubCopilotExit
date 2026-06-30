@@ -1,0 +1,475 @@
+name: "System Health Check — LLM Stack"
+
+# Tests all subsystems of the LLM stack:
+#   DGX Spark (Ollama) → gcopilot-proxy (Databricks) → nginx → clients
+#   gcopilot-proxy → MongoDB (Databricks)
+#
+# Can run on GitHub-hosted runners (documents what to test + generates report)
+# or on a self-hosted runner inside the private network (actually executes checks).
+#
+# Trigger:
+#   - Manual dispatch (workflow_dispatch)
+#   - Scheduled daily at 08:00 EST (12:00 UTC)
+#   - On changes to proxy/ or dashboard/ code
+
+on:
+    workflow_dispatch:
+        inputs:
+            test_suite:
+                description: "Which test suite to run"
+                required: true
+                default: "all"
+                type: choice
+                options:
+                    - all
+                    - auth
+                    - completions
+                    - dashboard
+                    - database
+                    - proxy-to-dgx
+                    - all-models
+            model:
+                description: "Model to use for completions test (default: qwen3)"
+                required: false
+                default: "qwen3"
+            skip_large_models:
+                description: "Skip 84GB models (faster, avoids 2-min cold-start)"
+                required: false
+                default: "true"
+                type: choice
+                options:
+                    - "true"
+                    - "false"
+            runner:
+                description: "Runner type"
+                required: false
+                default: "ubuntu-latest"
+                type: choice
+                options:
+                    - ubuntu-latest
+                    - self-hosted
+
+    schedule:
+        # Daily at 08:00 US/Eastern (12:00 UTC)
+        - cron: "0 12 * * *"
+
+    push:
+        paths:
+            - "proxy/**"
+            - "dashboard/**"
+            - ".github/extensions/system-tests/**"
+
+permissions:
+    contents: read
+
+jobs:
+    # ══════════════════════════════════════════════════════════════════════════
+    # JOB 1: Run on GitHub-hosted runner (no private network access)
+    # Generates a documented test plan and reference commands.
+    # ══════════════════════════════════════════════════════════════════════════
+    health-check-public:
+        name: "Health Check Reference (public runner)"
+        runs-on: ubuntu-latest
+        if: github.event.inputs.runner != 'self-hosted'
+        timeout-minutes: 10
+
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+
+            - name: Stack overview
+              run: |
+                  echo "╔══════════════════════════════════════════════════════╗"
+                  echo "║         LLM Stack Health Check Reference             ║"
+                  echo "╚══════════════════════════════════════════════════════╝"
+                  echo ""
+                  echo "Architecture:"
+                  echo "  Client → nginx (:80/:443 on 192.168.86.48)"
+                  echo "         → gcopilot-proxy (:8001 on 192.168.86.48)"
+                  echo "         → Ollama (:11434 on 192.168.86.39 / dgxspark)"
+                  echo "         → MongoDB (:27017 on 192.168.86.48)"
+                  echo ""
+                  echo "NOTE: GitHub-hosted runners cannot reach the private network."
+                  echo "      Use the 'self-hosted' runner option for live checks,"
+                  echo "      or run via the Copilot CLI extension 'system-tests'."
+
+            - name: Test suite — Auth checks (reference)
+              if: github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'auth' || github.event_name != 'workflow_dispatch'
+              run: |
+                  cat << 'CMD'
+                  ── AUTH TESTS ─────────────────────────────────────────────
+                  
+                  # API key enforcement
+                  curl -s -o /dev/null -w "%{http_code}" http://192.168.86.48/copilot/v1/models
+                  # Expected: 401
+                  
+                  curl -s -o /dev/null -w "%{http_code}" \
+                    -H "Authorization: Bearer WRONG_KEY" \
+                    http://192.168.86.48/copilot/v1/models
+                  # Expected: 401
+                  
+                  curl -s -o /dev/null -w "%{http_code}" \
+                    -H "Authorization: Bearer $PROXY_API_KEY" \
+                    http://192.168.86.48/copilot/v1/models
+                  # Expected: 200
+                  
+                  # Public health endpoint (no key needed)
+                  curl -s -o /dev/null -w "%{http_code}" http://192.168.86.48/copilot/health
+                  # Expected: 200
+                  
+                  # Dashboard session protection
+                  curl -s -o /dev/null -w "%{http_code}" http://192.168.86.48/copilot/
+                  # Expected: 302 (redirect to login)
+                  
+                  # Dashboard login
+                  curl -s -X POST http://192.168.86.48/copilot/login \
+                    -d "username=darkmatter2222&password=PASSWORD" \
+                    -H "Content-Type: application/x-www-form-urlencoded" \
+                    -c /tmp/cookies.txt
+                  curl -s -o /dev/null -w "%{http_code}" \
+                    -b /tmp/cookies.txt http://192.168.86.48/copilot/
+                  # Expected: 200
+                  
+                  # Admin endpoint HTTP Basic auth
+                  curl -s -o /dev/null -w "%{http_code}" http://192.168.86.48:8001/api/admin/keys
+                  # Expected: 401
+                  curl -s -o /dev/null -w "%{http_code}" \
+                    --user "darkmatter2222:ADMIN_PASS" \
+                    http://192.168.86.48:8001/api/admin/keys
+                  # Expected: 200
+                  CMD
+
+            - name: Test suite — Completions API (reference)
+              if: github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'completions' || github.event_name != 'workflow_dispatch'
+              run: |
+                  MODEL="${{ github.event.inputs.model || 'qwen3' }}"
+                  cat << CMD
+                  ── COMPLETIONS API TESTS ──────────────────────────────────
+                  
+                  # List models
+                  curl -s -H "Authorization: Bearer \$PROXY_API_KEY" \\
+                    http://192.168.86.48/copilot/v1/models | python3 -c \\
+                    "import sys,json; d=json.load(sys.stdin); print(f'{len(d[\"data\"])} models')"
+                  
+                  # Non-streaming chat completion (model: ${MODEL})
+                  curl -s -H "Authorization: Bearer \$PROXY_API_KEY" \\
+                    -H "Content-Type: application/json" \\
+                    -d '{"model":"${MODEL}","messages":[{"role":"user","content":"Reply: PASS"}],"max_tokens":6,"stream":false}' \\
+                    http://192.168.86.48/copilot/v1/chat/completions
+                  
+                  # Streaming SSE
+                  curl -s -H "Authorization: Bearer \$PROXY_API_KEY" \\
+                    -H "Content-Type: application/json" \\
+                    -d '{"model":"${MODEL}","messages":[{"role":"user","content":"Reply: PASS"}],"max_tokens":6,"stream":true}' \\
+                    http://192.168.86.48/copilot/v1/chat/completions
+                  CMD
+
+            - name: Test suite — Dashboard (reference)
+              if: github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'dashboard' || github.event_name != 'workflow_dispatch'
+              run: |
+                  cat << 'CMD'
+                  ── DASHBOARD TESTS ────────────────────────────────────────
+                  
+                  # Container health (run on Databricks via SSH)
+                  ssh darkmatter2222@192.168.86.48 \
+                    "docker inspect gcopilot-dashboard --format '{{.State.Running}}'"
+                  # Expected: true
+                  
+                  # serve.py on :3002
+                  ssh darkmatter2222@192.168.86.48 \
+                    "curl -s -o /dev/null -w '%{http_code}' http://localhost:3002/"
+                  # Expected: 302 or 200
+                  
+                  # Data endpoints
+                  curl -s -H "Authorization: Bearer $PROXY_API_KEY" \
+                    http://192.168.86.48:8001/stats
+                  # Expected: JSON object
+                  
+                  curl -s -H "Authorization: Bearer $PROXY_API_KEY" \
+                    http://192.168.86.48:8001/api/usage/daily
+                  # Expected: JSON array
+                  
+                  curl -s -H "Authorization: Bearer $PROXY_API_KEY" \
+                    http://192.168.86.48:8001/api/history
+                  # Expected: JSON array
+                  
+                  # nginx reverse proxy
+                  curl -s -o /dev/null -w "%{http_code}" \
+                    http://192.168.86.48/copilot/health
+                  # Expected: 200
+                  CMD
+
+            - name: Test suite — Database (reference)
+              if: github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'database' || github.event_name != 'workflow_dispatch'
+              run: |
+                  cat << 'CMD'
+                  ── DATABASE (MONGODB) TESTS ───────────────────────────────
+                  
+                  # MongoDB port reachable from Databricks
+                  ssh darkmatter2222@192.168.86.48 \
+                    "nc -z 192.168.86.48 27017 && echo open || echo closed"
+                  # Expected: open
+                  
+                  # Proxy container can reach MongoDB
+                  ssh darkmatter2222@192.168.86.48 \
+                    "docker exec gcopilot-proxy python3 -c \
+                      \"import socket; s=socket.create_connection(('192.168.86.48',27017),3); \
+                        s.close(); print('ok')\""
+                  # Expected: ok
+                  
+                  # Proxy health reports mongo=true
+                  ssh darkmatter2222@192.168.86.48 \
+                    "curl -sf http://localhost:8001/health" | python3 -c \
+                    "import sys,json; d=json.load(sys.stdin); print('mongo='+str(d.get('mongo')))"
+                  # Expected: mongo=True
+                  
+                  # Daily usage aggregation (MongoDB → proxy → client)
+                  curl -s -H "Authorization: Bearer $PROXY_API_KEY" \
+                    http://192.168.86.48:8001/api/usage/daily
+                  # Expected: [{date:..., requests:..., tokens:...}, ...]
+                  
+                  # History persistence (run inference, then check history grew)
+                  # Before:
+                  curl -s -H "Authorization: Bearer $PROXY_API_KEY" \
+                    http://192.168.86.48:8001/api/history | python3 -c \
+                    "import sys,json; print(len(json.load(sys.stdin)),'entries')"
+                  # After running: curl ... /v1/chat/completions ...
+                  CMD
+
+            - name: Test suite — Proxy→DGX (reference)
+              if: github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'proxy-to-dgx' || github.event_name != 'workflow_dispatch'
+              run: |
+                  cat << 'CMD'
+                  ── PROXY → DGX SPARK (OLLAMA) TESTS ─────────────────────
+                  
+                  # Ollama alive on DGX
+                  ssh dgxspark "curl -sf http://localhost:11434/api/version"
+                  # Expected: {"version":"..."}
+                  
+                  # Ollama model count
+                  ssh dgxspark "ollama list | tail -n +2 | wc -l"
+                  # Expected: 9 (or current count)
+                  
+                  # Proxy health shows ollama connected
+                  ssh darkmatter2222@192.168.86.48 \
+                    "curl -sf http://localhost:8001/health"
+                  # Expected: {..., "ollama": true, "model_count": 9}
+                  
+                  # Router refresh
+                  curl -s -X POST -H "Authorization: Bearer $PROXY_API_KEY" \
+                    http://192.168.86.48:8001/api/router/refresh
+                  # Expected: {"status":"refreshed","models":[...]}
+                  
+                  # End-to-end inference (qwen3:4b — fastest, 2.5GB)
+                  curl -s -H "Authorization: Bearer $PROXY_API_KEY" \
+                    -H "Content-Type: application/json" \
+                    -d '{"model":"qwen3:4b","messages":[{"role":"user","content":"Say: PASS"}],"max_tokens":6}' \
+                    http://192.168.86.48:8001/v1/chat/completions
+                  # Expected: {"choices":[{"message":{"content":"PASS"}}]}
+                  
+                  # Model loaded in VRAM after inference
+                  ssh dgxspark "ollama ps"
+                  # Expected: qwen3:4b in list
+                  CMD
+
+            - name: Test suite — All models (reference)
+              if: github.event.inputs.test_suite == 'all-models' || github.event.inputs.test_suite == 'all'
+              run: |
+                  SKIP="${{ github.event.inputs.skip_large_models || 'true' }}"
+                  echo "── ALL-MODELS TEST REFERENCE ──────────────────────────────"
+                  echo "skip_large_models: ${SKIP}"
+                  echo ""
+                  echo "Models to test:"
+                  echo "  Small  (≤18GB, fast):  qwen3, qwen3-coder, qwen3:4b, obliterated, qwen3.6:27b-mtp-q4_K_M"
+                  echo "  Large  (84GB, ~2min load): qwen3-coder-next:q8_0, qwen3-coder-next-spec:latest"
+                  echo "  Spec   (18GB, fast):  qwen3-coder-spec:latest"
+                  echo ""
+                  echo "Test command per model:"
+                  echo "  curl -s -H 'Authorization: Bearer \$PROXY_API_KEY' \\"
+                  echo "    -H 'Content-Type: application/json' \\"
+                  echo "    -d '{\"model\":\"MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Say: PASS\"}],\"max_tokens\":6}' \\"
+                  echo "    http://192.168.86.48:8001/v1/chat/completions"
+                  echo ""
+                  echo "Expected: response with choices[0].message.content non-empty within timeout."
+                  echo "Timeouts: small models < 30s, large models < 300s (includes VRAM load time)."
+
+            - name: Generate test report summary
+              if: always()
+              run: |
+                  echo "╔══════════════════════════════════════════════════════╗"
+                  echo "║              Test Suite Summary                      ║"
+                  echo "╚══════════════════════════════════════════════════════╝"
+                  echo ""
+                  echo "Suite: ${{ github.event.inputs.test_suite || 'all' }}"
+                  echo "Model: ${{ github.event.inputs.model || 'qwen3' }}"
+                  echo "Skip large: ${{ github.event.inputs.skip_large_models || 'true' }}"
+                  echo ""
+                  echo "To run LIVE tests (requires private network access):"
+                  echo "  1. Use the 'self-hosted' runner option in workflow_dispatch"
+                  echo "  2. Or use Copilot CLI extension tools:"
+                  echo "     - run-system-tests       Full test suite"
+                  echo "     - test-completions-api   API tests"
+                  echo "     - test-auth              Auth tests"
+                  echo "     - test-dashboard         Dashboard tests"
+                  echo "     - test-database          MongoDB tests"
+                  echo "     - test-proxy-to-dgx      DGX connection tests"
+                  echo "     - test-all-models        Per-model inference tests"
+                  echo ""
+                  echo "Run with Copilot CLI:"
+                  echo "  copilot-dgx.bat → select model → /ext run-system-tests"
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # JOB 2: Self-hosted runner (private network — LIVE checks)
+    # Requires a GitHub Actions runner registered on 192.168.86.48 (Databricks).
+    # Setup: https://docs.github.com/en/actions/hosting-your-own-runners
+    # ══════════════════════════════════════════════════════════════════════════
+    health-check-live:
+        name: "Health Check LIVE (self-hosted runner)"
+        runs-on: self-hosted
+        if: github.event.inputs.runner == 'self-hosted'
+        timeout-minutes: 30
+        env:
+            PROXY_API_KEY: ${{ secrets.PROXY_API_KEY }}
+            PROXY_BASE: "http://localhost:8001"
+            PUBLIC_BASE: "http://192.168.86.48/copilot"
+            DGX_HOST: "192.168.86.39"
+            MONGO_HOST: "192.168.86.48"
+
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+
+            - name: Proxy health prerequisite
+              id: proxy_health
+              run: |
+                  HEALTH=$(curl -sf http://localhost:8001/health 2>/dev/null || echo '{}')
+                  OLLAMA=$(echo "$HEALTH" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('ollama','false'))" 2>/dev/null)
+                  MODEL_COUNT=$(echo "$HEALTH" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('model_count',0))" 2>/dev/null)
+                  echo "ollama=$OLLAMA"
+                  echo "model_count=$MODEL_COUNT"
+                  echo "ollama=$OLLAMA" >> "$GITHUB_OUTPUT"
+                  if [ "$OLLAMA" != "True" ] && [ "$OLLAMA" != "true" ]; then
+                    echo "::error::Proxy not connected to Ollama. Aborting."
+                    exit 1
+                  fi
+
+            - name: Auth tests
+              if: github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'auth'
+              run: |
+                  PASS=0; FAIL=0
+                  check() { local label="$1" got="$2" want="$3"
+                    if [ "$got" = "$want" ]; then echo "✅ $label (got $got)"; ((PASS++))
+                    else echo "❌ $label (want $want, got $got)"; ((FAIL++)); fi
+                  }
+                  
+                  check "No key → 401" \
+                    "$(curl -s -o /dev/null -w '%{http_code}' ${PUBLIC_BASE}/v1/models)" "401"
+                  check "Wrong key → 401" \
+                    "$(curl -s -o /dev/null -w '%{http_code}' -H 'Authorization: Bearer wrong' ${PUBLIC_BASE}/v1/models)" "401"
+                  check "Valid key → 200" \
+                    "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer ${PROXY_API_KEY}" ${PUBLIC_BASE}/v1/models)" "200"
+                  check "/health public → 200" \
+                    "$(curl -s -o /dev/null -w '%{http_code}' ${PUBLIC_BASE}/health)" "200"
+                  check "Dashboard no session → 302" \
+                    "$(curl -s -o /dev/null -w '%{http_code}' ${PUBLIC_BASE}/)" "302"
+                  
+                  echo "Auth: $PASS passed, $FAIL failed"
+                  [ "$FAIL" -eq 0 ] || exit 1
+
+            - name: Completions API tests
+              if: github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'completions'
+              run: |
+                  MODEL="${{ github.event.inputs.model || 'qwen3' }}"
+                  PASS=0; FAIL=0
+                  
+                  # List models
+                  MODELS=$(curl -sf -H "Authorization: Bearer $PROXY_API_KEY" \
+                    $PROXY_BASE/v1/models 2>/dev/null | \
+                    python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d['data']))")
+                  if [ "$MODELS" -gt 0 ] 2>/dev/null; then
+                    echo "✅ /v1/models returned $MODELS models"; ((PASS++))
+                  else
+                    echo "❌ /v1/models returned no models (got: $MODELS)"; ((FAIL++))
+                  fi
+                  
+                  # Non-streaming inference
+                  CONTENT=$(curl -sf --max-time 60 \
+                    -H "Authorization: Bearer $PROXY_API_KEY" \
+                    -H "Content-Type: application/json" \
+                    -d "{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply: PASS\"}],\"max_tokens\":6,\"stream\":false}" \
+                    $PROXY_BASE/v1/chat/completions 2>/dev/null | \
+                    python3 -c "import sys,json; d=json.load(sys.stdin); print(d['choices'][0]['message']['content'][:40])" 2>/dev/null)
+                  if [ -n "$CONTENT" ]; then
+                    echo "✅ Inference ($MODEL): \"$CONTENT\""; ((PASS++))
+                  else
+                    echo "❌ Inference ($MODEL): no content"; ((FAIL++))
+                  fi
+                  
+                  echo "Completions: $PASS passed, $FAIL failed"
+                  [ "$FAIL" -eq 0 ] || exit 1
+
+            - name: Database tests
+              if: github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'database'
+              run: |
+                  PASS=0; FAIL=0
+                  
+                  # MongoDB port
+                  if nc -z $MONGO_HOST 27017 2>/dev/null; then
+                    echo "✅ MongoDB port 27017 open"; ((PASS++))
+                  else
+                    echo "❌ MongoDB port 27017 not reachable"; ((FAIL++))
+                  fi
+                  
+                  # Proxy reports mongo=true
+                  MONGO_FLAG=$(curl -sf http://localhost:8001/health | \
+                    python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('mongo'))" 2>/dev/null)
+                  [ "$MONGO_FLAG" = "True" ] && echo "✅ Proxy mongo=true" && ((PASS++)) || \
+                    { echo "❌ Proxy mongo=$MONGO_FLAG"; ((FAIL++)); }
+                  
+                  # Daily usage
+                  DAILY=$(curl -sf -H "Authorization: Bearer $PROXY_API_KEY" \
+                    $PROXY_BASE/api/usage/daily 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d))" 2>/dev/null)
+                  [ "$DAILY" -ge 0 ] 2>/dev/null && echo "✅ /api/usage/daily: $DAILY entries" && ((PASS++)) || \
+                    { echo "❌ /api/usage/daily failed"; ((FAIL++)); }
+                  
+                  echo "Database: $PASS passed, $FAIL failed"
+                  [ "$FAIL" -eq 0 ] || exit 1
+
+            - name: DGX connectivity tests
+              if: github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'proxy-to-dgx'
+              run: |
+                  PASS=0; FAIL=0
+                  
+                  # Ollama reachable
+                  DGX_VER=$(curl -sf http://$DGX_HOST:11434/api/version 2>/dev/null | \
+                    python3 -c "import sys,json; print(json.load(sys.stdin)['version'])" 2>/dev/null)
+                  [ -n "$DGX_VER" ] && echo "✅ Ollama on DGX: v$DGX_VER" && ((PASS++)) || \
+                    { echo "❌ Ollama unreachable on $DGX_HOST:11434"; ((FAIL++)); }
+                  
+                  # Proxy health shows ollama
+                  OLLAMA_OK=$(curl -sf http://localhost:8001/health | \
+                    python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('ollama'))" 2>/dev/null)
+                  [ "$OLLAMA_OK" = "True" ] && echo "✅ Proxy connected to Ollama" && ((PASS++)) || \
+                    { echo "❌ Proxy ollama=$OLLAMA_OK"; ((FAIL++)); }
+                  
+                  # End-to-end inference
+                  CONTENT=$(curl -sf --max-time 45 \
+                    -H "Authorization: Bearer $PROXY_API_KEY" \
+                    -H "Content-Type: application/json" \
+                    -d '{"model":"qwen3:4b","messages":[{"role":"user","content":"Say: PASS"}],"max_tokens":6}' \
+                    $PROXY_BASE/v1/chat/completions 2>/dev/null | \
+                    python3 -c "import sys,json; d=json.load(sys.stdin); print(d['choices'][0]['message']['content'][:40])" 2>/dev/null)
+                  [ -n "$CONTENT" ] && echo "✅ End-to-end inference: \"$CONTENT\"" && ((PASS++)) || \
+                    { echo "❌ End-to-end inference failed"; ((FAIL++)); }
+                  
+                  echo "DGX: $PASS passed, $FAIL failed"
+                  [ "$FAIL" -eq 0 ] || exit 1
+
+            - name: Summary
+              if: always()
+              run: |
+                  echo "═══════════════════════════════════════"
+                  echo " System Health Check Complete"
+                  echo " Suite: ${{ github.event.inputs.test_suite || 'all' }}"
+                  echo " Timestamp: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+                  echo "═══════════════════════════════════════"
