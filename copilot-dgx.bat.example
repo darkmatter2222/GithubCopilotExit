@@ -11,9 +11,15 @@ REM Recommended name: copilot-dgx.bat
 REM ============================================================
 
 set COPILOT_PROVIDER_TYPE=openai
-set COPILOT_PROVIDER_BASE_URL=http://192.168.86.39:8001/v1
-set COPILOT_PROVIDER_API_KEY=no-key
+set COPILOT_PROVIDER_BASE_URL=http://192.168.86.48/copilot/v1
+set COPILOT_PROVIDER_API_KEY=YOUR_API_KEY_HERE
 set COPILOT_ALLOW_ALL=true
+
+REM Extension credentials — read by .github/extensions/deploy-dgx/extension.mjs
+set DASHBOARD_USERNAME=darkmatter2222
+set DASHBOARD_PASSWORD=YOUR_DASHBOARD_PASSWORD_HERE
+set ADMIN_USERNAME=darkmatter2222
+set ADMIN_PASSWORD=YOUR_DASHBOARD_PASSWORD_HERE
 
 REM Find the real Copilot CLI, not this launcher.
 set REAL_COPILOT=
@@ -92,6 +98,7 @@ echo   GitHub MCP tools:      ALL
 echo   Experimental:          ON
 echo   Autopilot continues:   Unlimited
 echo   Voice input:           Use /voice inside Copilot CLI
+echo   Traffic routed via:    Databricks (192.168.86.48) → DGX Spark (192.168.86.39)
 echo ------------------------------------------------------------
 echo.
 echo In-session setup commands:

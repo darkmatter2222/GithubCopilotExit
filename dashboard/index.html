@@ -210,6 +210,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
     <button class="nav-tab" onclick="showPage('usage',this)">Usage</button>
     <button class="nav-tab" onclick="showPage('cost',this)">Cost</button>
     <button class="nav-tab" onclick="showPage('log',this)">Log</button>
+    <button class="nav-tab" onclick="showPage('admin',this)">&#9679; Admin</button>
   </div>
   <div class="nav-right">
     <div class="temp-toggle">
@@ -220,6 +221,9 @@ tr:hover td{background:rgba(255,255,255,.02)}
     <span id="rdot" class="rdot"></span>
     <span id="clock" class="clock-wrap">--:--:--</span>
     <span class="pulse"></span>
+    <a href="/logout" style="font-size:.58rem;color:var(--sub);text-decoration:none;
+       padding:2px 6px;border:1px solid var(--border);border-radius:2px;margin-left:4px;
+       letter-spacing:.04em;font-weight:700;text-transform:uppercase" title="Sign out">⏏</a>
   </div>
 </nav>
 
@@ -499,6 +503,86 @@ tr:hover td{background:rgba(255,255,255,.02)}
   <div class="panel"><div class="panel-body" style="padding:0"><div class="log-wrap" id="ev-log"></div></div></div>
 </div>
 
+<div class="page" id="page-admin">
+  <div class="shdr" style="margin-top:10px">
+    <h2>Admin · API Keys</h2>
+    <button class="pill" onclick="adminLoadKeys()" style="font-size:.6rem">↻ Refresh</button>
+  </div>
+
+  <!-- Status banner -->
+  <div id="admin-status-banner" style="margin-bottom:10px;padding:8px 12px;border-radius:2px;font-size:.7rem;background:#161616;border:1px solid #2a2a2a">
+    Loading…
+  </div>
+
+  <!-- Create key panel -->
+  <div class="panel" style="margin-bottom:12px">
+    <div class="ph">Create New API Key</div>
+    <div class="panel-body" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <input id="new-key-name" type="text" placeholder="Key name (e.g. vs-code-laptop)"
+        style="background:#161616;border:1px solid #2a2a2a;border-radius:2px;color:#e0e0e0;
+               font-size:.75rem;padding:5px 9px;flex:1;min-width:180px;outline:none"/>
+      <button onclick="adminCreateKey()"
+        style="background:#76b900;color:#000;border:none;border-radius:2px;padding:5px 14px;
+               font-size:.67rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">
+        Generate Key
+      </button>
+    </div>
+  </div>
+
+  <!-- New key display (shown after creation) -->
+  <div id="new-key-display" style="display:none;margin-bottom:12px" class="panel">
+    <div class="ph" style="color:var(--nv)">New API Key — Copy Now (shown once only)</div>
+    <div class="panel-body">
+      <div style="display:flex;gap:8px;align-items:center">
+        <code id="new-key-value" style="font-family:var(--mono);font-size:.75rem;
+          background:#0a1a00;border:1px solid rgba(118,185,0,.3);border-radius:2px;
+          padding:6px 10px;flex:1;word-break:break-all;color:var(--nv)"></code>
+        <button onclick="adminCopyKey()"
+          style="background:#1c1c1c;color:var(--nv);border:1px solid rgba(118,185,0,.3);
+                 border-radius:2px;padding:5px 10px;font-size:.65rem;font-weight:700;cursor:pointer;
+                 white-space:nowrap">
+          Copy
+        </button>
+      </div>
+      <div style="font-size:.62rem;color:var(--sub);margin-top:6px">
+        ⚠ Add this key to <code style="color:var(--text)">PROXY_API_KEYS</code> in your .env
+        and to <code style="color:var(--text)">COPILOT_PROVIDER_API_KEY</code> in copilot-dgx.bat.
+        It will not be shown again.
+      </div>
+    </div>
+  </div>
+
+  <!-- Keys table -->
+  <div class="panel">
+    <div class="ph">Active API Keys <span id="admin-key-count" class="ph-badge" style="margin-left:6px">0</span></div>
+    <div class="panel-body" style="padding:0">
+      <div class="tw">
+        <table id="admin-keys-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Key Preview</th>
+              <th>Created</th>
+              <th>Last Used</th>
+              <th>Source</th>
+              <th>Status</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="admin-keys-body">
+            <tr><td colspan="7" style="color:var(--sub);text-align:center;padding:18px">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div style="margin-top:10px;font-size:.62rem;color:var(--sub)">
+    Static keys (from <code>PROXY_API_KEYS</code> env var) are not listed here — they are managed via .env.
+    Dynamic keys created here are stored in MongoDB and can be revoked without restarting the proxy.
+  </div>
+</div>
+
 <script>
 'use strict';
 
@@ -595,6 +679,7 @@ function showPage(id, btn) {
   else if (id==='usage') loadUsage();
   else if (id==='cost') loadCostPage();
   else if (id==='models') loadModels();
+  else if (id==='admin') { adminLoadStatus(); adminLoadKeys(); }
 }
 
 // ── Clock ─────────────────────────────────────────────────────────────────
@@ -1344,6 +1429,120 @@ if (typeof Sortable !== 'undefined') {
     chosenClass: 'sortable-chosen',
     onEnd: savePanelOrder
   });
+}
+
+// ── Admin: API Key Management ─────────────────────────────────────────────────
+
+async function adminLoadStatus() {
+  try {
+    const r = await pFetch('/api/admin/status');
+    if (!r.ok) {
+      document.getElementById('admin-status-banner').innerHTML =
+        `<span style="color:var(--red)">⚠ Cannot reach admin API (${r.status}). Check ADMIN_USERNAME/ADMIN_PASSWORD.</span>`;
+      return;
+    }
+    const d = await r.json();
+    document.getElementById('admin-status-banner').innerHTML =
+      `Auth: <b style="color:${d.api_key_required ? 'var(--nv)' : 'var(--yellow)'}">
+        ${d.api_key_required ? 'ENABLED' : 'DISABLED'}</b> &nbsp;·&nbsp;
+       Static keys: <b>${d.static_key_count}</b> &nbsp;·&nbsp;
+       MongoDB: <b style="color:${d.mongodb_enabled ? 'var(--nv)' : 'var(--sub)'}">
+         ${d.mongodb_enabled ? 'Connected' : 'Offline (memory mode)'}</b>`;
+  } catch(e) {
+    document.getElementById('admin-status-banner').innerHTML =
+      `<span style="color:var(--red)">⚠ ${e.message}</span>`;
+  }
+}
+
+async function adminLoadKeys() {
+  const tbody = document.getElementById('admin-keys-body');
+  const cntEl = document.getElementById('admin-key-count');
+  try {
+    const r = await pFetch('/api/admin/keys');
+    if (!r.ok) {
+      tbody.innerHTML = `<tr><td colspan="7" style="color:var(--red);text-align:center;padding:16px">
+        Error ${r.status} — check admin credentials in ADMIN_USERNAME/ADMIN_PASSWORD env vars.</td></tr>`;
+      return;
+    }
+    const d = await r.json();
+    const keys = d.data || [];
+    cntEl.textContent = keys.length;
+    if (!keys.length) {
+      tbody.innerHTML = '<tr><td colspan="7" style="color:var(--sub);text-align:center;padding:18px">No dynamic keys found.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = keys.map(k => {
+      const created = k.created_at ? k.created_at.slice(0,16).replace('T',' ') : '—';
+      const used = k.last_used ? k.last_used.slice(0,16).replace('T',' ') : 'Never';
+      const active = k.is_active !== false;
+      const id = k._id || k.key_id || '';
+      const preview = k.key_preview || '(hidden)';
+      return `<tr>
+        <td style="font-weight:600">${escHtml(k.name || '—')}</td>
+        <td><code style="font-size:.65rem;color:var(--teal)">${escHtml(preview)}</code></td>
+        <td style="color:var(--sub)">${created}</td>
+        <td style="color:var(--sub)">${used}</td>
+        <td><span class="badge b-ok">${escHtml(k.source || 'mongodb')}</span></td>
+        <td><span class="badge ${active ? 'b-live' : 'b-err'}">${active ? 'ACTIVE' : 'REVOKED'}</span></td>
+        <td>${active ? `<button onclick="adminRevokeKey('${escHtml(id)}')"
+          style="background:rgba(224,64,64,.15);color:var(--red);border:1px solid rgba(224,64,64,.2);
+                 border-radius:2px;padding:2px 8px;font-size:.6rem;font-weight:700;cursor:pointer">
+          Revoke</button>` : '—'}</td>
+      </tr>`;
+    }).join('');
+  } catch(e) {
+    tbody.innerHTML = `<tr><td colspan="7" style="color:var(--red);text-align:center;padding:16px">${escHtml(e.message)}</td></tr>`;
+  }
+}
+
+async function adminCreateKey() {
+  const name = document.getElementById('new-key-name').value.trim();
+  if (!name) { alert('Enter a name for the key.'); return; }
+  try {
+    const r = await pFetch('/api/admin/keys', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name})
+    });
+    if (!r.ok) {
+      const e = await r.json().catch(()=>({}));
+      alert('Error creating key: ' + (e.detail || r.status));
+      return;
+    }
+    const d = await r.json();
+    document.getElementById('new-key-value').textContent = d.key;
+    document.getElementById('new-key-display').style.display = 'block';
+    document.getElementById('new-key-name').value = '';
+    await adminLoadKeys();
+  } catch(e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+function adminCopyKey() {
+  const key = document.getElementById('new-key-value').textContent;
+  navigator.clipboard.writeText(key).then(() => {
+    const btn = event.target;
+    const orig = btn.textContent;
+    btn.textContent = 'Copied!';
+    setTimeout(() => btn.textContent = orig, 2000);
+  });
+}
+
+async function adminRevokeKey(keyId) {
+  if (!confirm('Revoke this API key? Any clients using it will lose access immediately.')) return;
+  try {
+    const r = await pFetch(`/api/admin/keys/${encodeURIComponent(keyId)}`, { method: 'DELETE' });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { alert('Error: ' + (d.detail || r.status)); return; }
+    await adminLoadKeys();
+  } catch(e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 </script>
 </body>

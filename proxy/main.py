@@ -9,7 +9,7 @@ Architecture:
   - Thinking suppression workaround for Ollama tool-calling bug (inject reasoning_effort=none)
   - delta.reasoning → delta.content remap for vLLM reasoning-parser responses
   - Token tracking (in-memory) + MongoDB persistence for history/analytics
-  - /stats JSON + /dashboard live HTML analytics
+  - /stats JSON analytics (dashboard served separately on Databricks)
 """
 
 import json
@@ -17,6 +17,8 @@ import logging
 import os
 import time
 import asyncio
+import hmac
+import secrets as _secrets_mod
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
@@ -27,9 +29,10 @@ if os.path.exists(_env_path):
 elif os.path.exists(".env"):
     load_dotenv(".env")
 
-from fastapi import FastAPI, Request, Response
-from fastapi.responses import StreamingResponse, HTMLResponse, JSONResponse
+from fastapi import FastAPI, Request, Response, Depends, HTTPException
+from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 import httpx
 import psutil
 
@@ -51,6 +54,37 @@ MIN_TEMPERATURE = float(os.environ.get("MIN_TEMPERATURE", "0.6"))
 DISABLE_THINKING = os.environ.get("DISABLE_THINKING_FOR_TOOLS", "true").lower() in (
     "true", "1", "yes"
 )
+
+# ── Auth configuration ────────────────────────────────────────────────────────
+
+# When true, all /v1/* /stats /api/* endpoints require a valid API key.
+API_KEY_REQUIRED = os.environ.get("API_KEY_REQUIRED", "false").lower() in ("true", "1", "yes")
+
+# Comma-separated static API keys (checked in addition to MongoDB-stored keys).
+STATIC_API_KEYS: frozenset[str] = frozenset(
+    k.strip() for k in os.environ.get("PROXY_API_KEYS", "").split(",") if k.strip()
+)
+
+# Admin credentials for /api/admin/* management endpoints.
+ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
+
+_http_basic = HTTPBasic(auto_error=True)
+
+
+def verify_admin(creds: HTTPBasicCredentials = Depends(_http_basic)) -> HTTPBasicCredentials:
+    """FastAPI dependency: require valid HTTP Basic admin credentials."""
+    if not ADMIN_USERNAME or not ADMIN_PASSWORD:
+        raise HTTPException(status_code=503, detail="Admin auth not configured — set ADMIN_USERNAME and ADMIN_PASSWORD")
+    ok_user = hmac.compare_digest(creds.username.encode(), ADMIN_USERNAME.encode())
+    ok_pass = hmac.compare_digest(creds.password.encode(), ADMIN_PASSWORD.encode())
+    if not (ok_user and ok_pass):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid admin credentials",
+            headers={"WWW-Authenticate": 'Basic realm="LLM Proxy Admin"'},
+        )
+    return creds
 
 # ── Global singletons ─────────────────────────────────────────────────────────
 
@@ -81,13 +115,70 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="LLM Proxy", version="3.0.0", lifespan=lifespan)
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ── API Key Authentication Middleware ─────────────────────────────────────────
+
+# Paths that never require API key authentication.
+_AUTH_EXEMPT_PREFIXES = ("/health",)
+_AUTH_EXEMPT_EXACT = {"/health", "/"}
+
+
+@app.middleware("http")
+async def api_key_middleware(request: Request, call_next):
+    """Enforce API key authentication when API_KEY_REQUIRED=true."""
+    if not API_KEY_REQUIRED:
+        return await call_next(request)
+
+    path = request.url.path
+
+    # Admin endpoints use their own HTTP Basic Auth — exempt from API key check.
+    if path.startswith("/api/admin"):
+        return await call_next(request)
+
+    # Health endpoint is always accessible.
+    if path in _AUTH_EXEMPT_EXACT or any(path.startswith(p) for p in _AUTH_EXEMPT_PREFIXES):
+        return await call_next(request)
+
+    # Extract API key from Authorization: Bearer <key> or X-API-Key header.
+    api_key: str = ""
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        api_key = auth_header[7:].strip()
+    if not api_key:
+        api_key = request.headers.get("X-API-Key", "").strip()
+    if not api_key:
+        api_key = request.headers.get("x-api-key", "").strip()
+
+    if not api_key:
+        return JSONResponse(
+            {"error": "Unauthorized", "detail": "API key required. Provide Authorization: Bearer <key>"},
+            status_code=401,
+        )
+
+    # Constant-time check against static env-var keys.
+    for static_key in STATIC_API_KEYS:
+        if hmac.compare_digest(api_key.encode(), static_key.encode()):
+            return await call_next(request)
+
+    # Check MongoDB / in-memory dynamic keys.
+    try:
+        if await session_db.verify_api_key(api_key):
+            return await call_next(request)
+    except Exception as exc:
+        log.warning("API key verification error: %s", exc)
+
+    log.warning("Rejected request with invalid API key (path=%s)", path)
+    return JSONResponse(
+        {"error": "Forbidden", "detail": "Invalid or revoked API key"},
+        status_code=401,
+    )
 
 
 # ── Request body transformations ──────────────────────────────────────────────
@@ -596,22 +687,6 @@ async def health():
     }
 
 
-@app.get("/dashboard", response_class=HTMLResponse)
-async def dashboard():
-    """Serve the analytics dashboard."""
-    d = os.path.dirname(__file__)
-    for path in [
-        os.path.join(d, "dashboard.html"),
-        os.path.join(d, "..", "dashboard", "index.html"),
-    ]:
-        if os.path.exists(path):
-            with open(path, encoding="utf-8") as f:
-                return f.read()
-    return HTMLResponse(
-        "<h1>Dashboard not found</h1><p>Deploy dashboard/index.html alongside the proxy.</p>"
-    )
-
-
 # ── Azure OpenAI compatibility shims ─────────────────────────────────────────
 
 @app.post("/openai/deployments/{deployment}/chat/completions")
@@ -623,3 +698,55 @@ async def azure_chat(deployment: str, request: Request):
 @app.get("/openai/models")
 async def azure_models():
     return await list_models()
+
+
+# ── Admin: API Key Management ─────────────────────────────────────────────────
+
+@app.get("/api/admin/keys")
+async def admin_list_keys(creds: HTTPBasicCredentials = Depends(verify_admin)):
+    """List all dynamic API keys (admin only). Does not expose key hashes."""
+    keys = await session_db.list_api_keys()
+    return JSONResponse({
+        "data": keys,
+        "static_key_count": len(STATIC_API_KEYS),
+        "auth_enabled": API_KEY_REQUIRED,
+    })
+
+
+@app.post("/api/admin/keys")
+async def admin_create_key(request: Request, creds: HTTPBasicCredentials = Depends(verify_admin)):
+    """Generate a new API key (admin only). Returns the key once — store it securely."""
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    name = str(body.get("name", "unnamed"))[:64]
+    key = _secrets_mod.token_urlsafe(32)
+    key_id = await session_db.create_api_key(name, key)
+    log.info("Admin created API key '%s' (id=%s)", name, key_id)
+    return JSONResponse({
+        "key_id": key_id,
+        "key": key,
+        "name": name,
+        "note": "Store this key securely — it will not be shown again.",
+    })
+
+
+@app.delete("/api/admin/keys/{key_id}")
+async def admin_revoke_key(key_id: str, creds: HTTPBasicCredentials = Depends(verify_admin)):
+    """Revoke a dynamic API key by ID (admin only)."""
+    found = await session_db.revoke_api_key(key_id)
+    log.info("Admin revoked API key id=%s (found=%s)", key_id, found)
+    return JSONResponse({"status": "revoked" if found else "not_found", "key_id": key_id})
+
+
+@app.get("/api/admin/status")
+async def admin_status(creds: HTTPBasicCredentials = Depends(verify_admin)):
+    """Return auth/security configuration status (admin only)."""
+    return JSONResponse({
+        "api_key_required": API_KEY_REQUIRED,
+        "static_key_count": len(STATIC_API_KEYS),
+        "admin_configured": bool(ADMIN_USERNAME and ADMIN_PASSWORD),
+        "mongodb_enabled": session_db.enabled,
+    })

@@ -39,6 +39,6 @@ ENV REFRESH_S=5
 EXPOSE ${DASHBOARD_PORT}
 
 HEALTHCHECK --interval=15s --timeout=5s --start-period=3s --retries=3 \
-  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:3000/healthcheck')" || exit 1
+  CMD python -c "import os,urllib.request; urllib.request.urlopen('http://localhost:' + os.environ.get('DASHBOARD_PORT','3000') + '/healthcheck')" || exit 1
 
 CMD ["python", "serve.py"]

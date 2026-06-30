@@ -8,17 +8,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Proxy source files
 COPY *.py ./
 
-# Dashboard — served at /dashboard
-# Looks for dashboard.html here, then ../dashboard/index.html
-COPY dashboard.html ./
-
 # ── Runtime defaults (override via docker run -e or .env mount) ────────────
-# OLLAMA_BASE_URL  — Ollama API (host network: use host.docker.internal or actual IP)
+# OLLAMA_BASE_URL  — Ollama API endpoint (DGX Spark: http://192.168.86.39:11434)
 # VLLM_BASE_URL    — Optional vLLM comma-separated URLs
 # MIN_TEMPERATURE  — Minimum temperature clamp for Qwen3 thinking mode
 # MONGO_URI        — MongoDB connection string (leave blank for memory-only)
 # MONGO_DB         — MongoDB database name
-ENV OLLAMA_BASE_URL=http://host.docker.internal:11434
+ENV OLLAMA_BASE_URL=http://192.168.86.39:11434
 ENV VLLM_BASE_URL=
 ENV MIN_TEMPERATURE=0.6
 ENV DISABLE_THINKING_FOR_TOOLS=true

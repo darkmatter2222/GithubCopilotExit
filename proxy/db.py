@@ -3,11 +3,17 @@ MongoDB persistence layer for LLM proxy.
 Stores session data, input/output token counts, timing info, and request history.
 """
 
+import hashlib
 import os
+import secrets
 import time
 from datetime import datetime, timezone
 from bson import ObjectId
 import motor.motor_asyncio
+
+# In-memory API key store used when MongoDB is not configured.
+# Maps key_hash -> {key_id, name, created_at, last_used, is_active}
+_mem_api_keys: dict[str, dict] = {}
 
 
 class SessionDB:
@@ -228,6 +234,111 @@ class SessionDB:
         except Exception as e:
             print(f"[db warn] Failed to get daily cost: {e}")
             return []
+
+    # ── API Key Management ────────────────────────────────────────────────────
+
+    @staticmethod
+    def _hash_key(key: str) -> str:
+        return hashlib.sha256(key.encode()).hexdigest()
+
+    async def verify_api_key(self, key: str) -> bool:
+        """Return True if key is valid and active."""
+        key_hash = self._hash_key(key)
+        now_str = datetime.now(timezone.utc).isoformat()
+
+        if self.enabled:
+            try:
+                doc = await self.db.api_keys.find_one(
+                    {"key_hash": key_hash, "is_active": True}
+                )
+                if doc:
+                    await self.db.api_keys.update_one(
+                        {"_id": doc["_id"]}, {"$set": {"last_used": now_str}}
+                    )
+                    return True
+            except Exception as e:
+                print(f"[db warn] verify_api_key error: {e}")
+
+        # Fallback to in-memory store
+        entry = _mem_api_keys.get(key_hash)
+        if entry and entry.get("is_active"):
+            entry["last_used"] = now_str
+            return True
+        return False
+
+    async def list_api_keys(self) -> list:
+        """Return all API keys (without the actual key hash for security)."""
+        results = []
+        if self.enabled:
+            try:
+                cursor = self.db.api_keys.find(
+                    {}, {"key_hash": 0}
+                ).sort("created_at", -1).limit(200)
+                docs = await cursor.to_list(length=200)
+                for d in docs:
+                    d["_id"] = str(d["_id"])
+                    d["source"] = "mongodb"
+                return docs
+            except Exception as e:
+                print(f"[db warn] list_api_keys error: {e}")
+
+        # Fallback: return in-memory keys
+        for kh, entry in _mem_api_keys.items():
+            results.append({**entry, "source": "memory"})
+        return results
+
+    async def create_api_key(self, name: str, key: str) -> str:
+        """Store a new API key. Returns the key_id."""
+        key_hash = self._hash_key(key)
+        now_str = datetime.now(timezone.utc).isoformat()
+        key_id = secrets.token_hex(16)
+        doc = {
+            "key_id": key_id,
+            "name": name,
+            "key_preview": key[:8] + "…",
+            "key_hash": key_hash,
+            "created_at": now_str,
+            "last_used": None,
+            "is_active": True,
+        }
+
+        if self.enabled:
+            try:
+                result = await self.db.api_keys.insert_one(doc)
+                return str(result.inserted_id)
+            except Exception as e:
+                print(f"[db warn] create_api_key error: {e}")
+
+        # Fallback: store in memory
+        _mem_api_keys[key_hash] = doc
+        return key_id
+
+    async def revoke_api_key(self, key_id: str) -> bool:
+        """Deactivate a key by key_id or MongoDB _id. Returns True if found."""
+        if self.enabled:
+            try:
+                # Try _id first, then key_id field
+                res = None
+                try:
+                    res = await self.db.api_keys.update_one(
+                        {"_id": ObjectId(key_id)}, {"$set": {"is_active": False}}
+                    )
+                except Exception:
+                    pass
+                if not res or res.matched_count == 0:
+                    res = await self.db.api_keys.update_one(
+                        {"key_id": key_id}, {"$set": {"is_active": False}}
+                    )
+                return bool(res and res.matched_count > 0)
+            except Exception as e:
+                print(f"[db warn] revoke_api_key error: {e}")
+
+        # Fallback: update in-memory
+        for kh, entry in _mem_api_keys.items():
+            if entry.get("key_id") == key_id:
+                entry["is_active"] = False
+                return True
+        return False
 
     async def close(self) -> None:
         if self.client:
