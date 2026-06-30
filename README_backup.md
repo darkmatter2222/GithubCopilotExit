@@ -531,6 +531,3 @@ If this saved you from cloud API costs or gave you peace of mind about privacy, 
 [MIT License](LICENSE) — Free forever, no strings attached.
 
 </div>
-
-## 🧠 DeepSeek DSpark Speculative Decoding Framework
-
