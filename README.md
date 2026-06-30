@@ -544,7 +544,17 @@ If this saved you from cloud API costs or gave you peace of mind about privacy, 
 - Employs a verification process to validate or correct candidates
 - Significantly reduces time-to-first-token and overall token generation rate
 
-![DSpark Architecture](https://upload.wikimedia.org/wikipedia/commons/3/39/Overall_architecture_of_DeepSeek-V4_series.svg)
+```
+[Input Prompt] 
+     ↓
+[Draft Model (Small, Fast)]
+     ↓  
+[Candidates Generation]
+     ↓
+[Verification Model (Large, Accurate)] 
+     ↓
+[Final Output Tokens]
+```
 
 ### Performance Benchmarks
 
