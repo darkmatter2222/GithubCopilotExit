@@ -212,6 +212,7 @@ class TokenTracker:
                 "ttft": round(s.first_token_time - s.start_time, 2) if s.first_token_time else 0,
                 "tps": round(s.tps_since_first_token, 1),
                 "active": False,
+                "_finish_ts": s.finish_time,  # timestamp for TPS chart decay window
             }
             self._history.insert(0, entry)
             while len(self._history) > self.MAX_HISTORY:
@@ -245,8 +246,13 @@ class TokenTracker:
     # ── chart helper (no external lock needed, called from get_active_summary) ──
     def _snapshot_tps(self) -> None:
         now = time.time()
+        # Active requests still streaming
         active = [s for s in self._requests.values() if not s.finished and s.last_token_time > 0]
-        combined = sum(s.tps_since_first_token for s in active)
+        # Recently completed (within last 30s) — includes their TPS so the chart has signal between calls
+        recently_done = [h for h in self._history
+                         if h.get("tps") is not None
+                         and now - h.get("_finish_ts", now) < 30]
+        combined = sum(s.tps_since_first_token for s in active) + sum(h["tps"] for h in recently_done)
         self.tps_history.append({"ts": now, "value": round(combined, 1)})
         # Slide window
         while len(self.tps_history) > self.MAX_TPS_POINTS:
@@ -304,7 +310,9 @@ class TokenTracker:
 
                 # charts
                 "tps_history": list(self.tps_history),
-                "io_series": [h for h in self._history[:15] if h.get("prompt_tokens") or h.get("completion_tokens")],
+                "io_series": [{k: v for k, v in h.items() if not k.startswith("_")}
+                              for h in self._history[:15]
+                              if h.get("prompt_tokens") or h.get("completion_tokens")],
 
                 # event log (newest first)
                 "events": list(reversed(self.events)),
@@ -312,7 +320,8 @@ class TokenTracker:
                 # active detail
                 "active_requests_detail": active_summaries,
 
-                # recent history
-                "history": self._history[:self.MAX_HISTORY],
+                # recent history (strip internal fields)
+                "history": [{k: v for k, v in h.items() if not k.startswith("_")}
+                           for h in self._history[:self.MAX_HISTORY]],
             }
 
