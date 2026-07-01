@@ -50,7 +50,14 @@ class RequestStats:
         """Real-time TPS from token arrival times, or fallback to eval_duration."""
         if self.first_token_time == 0 or self.last_token_time == 0:
             # Fallback: use Ollama's reported eval duration
-            return self.avg_completion_tps
+            tps = self.avg_completion_tps
+            # If eval_duration also unavailable (Ollama doesn't always report it),
+            # estimate from wall-clock duration
+            if tps == 0.0 and self.eval_count > 0 and self.finish_time > 0:
+                dur = self.finish_time - self.start_time
+                if dur > 0:
+                    return round(self.eval_count / dur, 1)
+            return tps
         elapsed = self.last_token_time - self.first_token_time
         # Minimum window: 10ms for meaningful measurement (prevents division by near-zero).
         # NOTE: this must never return float('inf') — it used to, and that value is not
@@ -168,6 +175,7 @@ class TokenTracker:
             if s:
                 s.finished = True
                 s.finish_time = time.time()
+                self._requests.pop(request_id, None)
             self.error_count += 1
             in_t = s.prompt_tokens if s else 0
             out_t = max(s.completion_tokens, s.eval_count) if s else 0
@@ -221,6 +229,11 @@ class TokenTracker:
             out = max(s.completion_tokens, s.eval_count)
             in_t = s.prompt_tokens
             total_t = max(in_t + out, s.total_tokens)
+            # Compute TPS — prefer streaming measurement; fall back to duration-based calc
+            tps = s.streaming_tps if dur > 0 and out else 0
+            if tps == 0 and dur > 0:
+                tps = round(out / dur, 1)
+
             # Push to history
             entry = {
                 "id": s.request_id,
@@ -230,7 +243,8 @@ class TokenTracker:
                 "total_tokens": total_t,
                 "duration": round(dur, 1),
                 "ttft_ms": round(s.ttft_ms, 1),
-                "tps": round(s.streaming_tps, 1),
+                "ttft": round(s.ttft_ms, 1),
+                "tps": tps,
                 "active": False,
             }
             self._history.insert(0, entry)
@@ -257,7 +271,7 @@ class TokenTracker:
                     "total_tokens": total_t,
                     "duration_secs": round(dur, 2),
                     "ttft_ms": round(s.ttft_ms, 1),
-                    "tps": round(s.streaming_tps, 1),
+                    "tps": tps,
                     "has_error": False,
                 }
                 try:
@@ -280,10 +294,20 @@ class TokenTracker:
         now = time.time()
         with self._lock:
             active_list = [s for s in self._requests.values() if not s.finished]
+
+            # Compute per-request TPS with duration fallback for each active request
+            def _req_tps(req: "RequestStats") -> float:
+                t = round(req.tps_since_first_token, 1) if req.tps_since_first_token else 0
+                if t == 0:
+                    o = max(req.completion_tokens, req.eval_count)
+                    el = now - req.start_time
+                    if el > 0 and o:
+                        t = round(o / el, 1)
+                return t
+
             recent = [s for s in self._requests.values()
                       if not s.finished and (now - s.last_token_time) < 10]
-
-            combined_tps = sum(s.tps_since_first_token for s in recent)
+            combined_tps = sum(_req_tps(s) for s in recent)
             # Active requests still in flight (not yet in history)
             active_in = sum(s.prompt_tokens for s in self._requests.values())
             active_out_sum = sum(max(s.completion_tokens, s.eval_count)
@@ -300,15 +324,20 @@ class TokenTracker:
                 out = max(s.completion_tokens, s.eval_count)
                 elapsed = now - s.start_time
                 entry_total = max(s.prompt_tokens + out, s.total_tokens)
+                # Live TPS: prefer streaming measurement; fall back to duration-based calc
+                live_tps = round(s.tps_since_first_token, 1) if s.tps_since_first_token else 0
+                if live_tps == 0 and elapsed > 0 and out:
+                    live_tps = round(out / elapsed, 1)
                 active_summaries.append({
                     "id": s.request_id,
                     "model": s.model,
                     "prompt_tokens": s.prompt_tokens,
                     "completion_tokens": out,
                     "total_tokens": entry_total,
-                    "tps": round(s.tps_since_first_token, 1),
+                    "tps": live_tps,
                     "elapsed": round(elapsed, 1),
                     "ttft": round(s.ttft_ms, 1),
+                    "ttft_ms": round(s.ttft_ms, 1),
                 })
 
             return {

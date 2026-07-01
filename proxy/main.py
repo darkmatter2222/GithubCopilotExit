@@ -9,7 +9,7 @@ Architecture:
   - Thinking suppression workaround for Ollama tool-calling bug (inject reasoning_effort=none)
   - delta.reasoning → delta.content remap for vLLM reasoning-parser responses
   - Token tracking (in-memory) + MongoDB persistence for history/analytics
-  - /stats JSON analytics (dashboard served separately on Databricks)
+  - /stats JSON analytics (dashboard served separately on Data Brick)
 """
 
 import json
@@ -97,7 +97,7 @@ tracker = TokenTracker()
 session_db = SessionDB()
 set_db(session_db)
 
-# GPU stats service — runs on DGX Spark (port 11435) when proxy is remote (Databricks).
+# GPU stats service — runs on DGX Spark (port 11435) when proxy is remote (Data Brick).
 # Auto-derived from OLLAMA_BASE_URL if not explicitly set: replace :11434 → :11435.
 _ollama_base = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
 GPU_STATS_URL: str = os.environ.get(
@@ -114,6 +114,10 @@ GPU_MEM_TOTAL_MB: int = int(os.environ.get("GPU_MEM_TOTAL_MB", "0"))
 _sys_cache: dict = {}
 _sys_cache_ts: float = 0.0
 _SYS_TTL = 5.0
+
+# Delta counters for IO charts (network + disk) — persisted across cache refreshes
+_net_prev: dict = {}   # {bytes_sent, bytes_recv, packets_sent, packets_recv, ts}
+_disk_prev: dict = {}  # {read_bytes, write_bytes, read_count, write_count, busy_time, ts}
 
 
 # ── Application lifecycle ─────────────────────────────────────────────────────
@@ -288,7 +292,7 @@ def prepare_body(body: dict) -> tuple[dict, str]:
 
 async def get_system_stats() -> dict:
     """Gather CPU/RAM/disk/GPU stats. Cached for _SYS_TTL seconds."""
-    global _sys_cache, _sys_cache_ts
+    global _sys_cache, _sys_cache_ts, _net_prev, _disk_prev
     now = time.time()
     if _sys_cache and (now - _sys_cache_ts) < _SYS_TTL:
         return _sys_cache
@@ -298,9 +302,12 @@ async def get_system_stats() -> dict:
     # CPU / RAM / disk via psutil
     try:
         cpu_pct = psutil.cpu_percent(interval=0.1)
+        cpu_per = psutil.cpu_percent(interval=0, percpu=True)  # uses prior interval samples
         mem = psutil.virtual_memory()
         disk = psutil.disk_usage("/")
         result["cpu_percent"] = round(cpu_pct, 1)
+        result["cpu_per_core"] = [round(x, 1) for x in cpu_per]
+        result["cpu_count"] = len(cpu_per)
         result["ram_used_gb"] = round(mem.used / 1024 ** 3, 1)
         result["ram_total_gb"] = round(mem.total / 1024 ** 3, 1)
         result["ram_percent"] = mem.percent
@@ -309,6 +316,53 @@ async def get_system_stats() -> dict:
         result["disk_percent"] = disk.percent
     except Exception as exc:
         log.warning("psutil failed: %s", exc)
+
+    # ── Network IO delta (bytes/s, packets/s) ──────────────────────────────────────
+    try:
+        net = psutil.net_io_counters()
+        dt_net = now - _net_prev.get("ts", now)
+        if dt_net > 0 and _net_prev:
+            result["net_rx_bytes_s"] = round((net.bytes_recv - _net_prev.get("bytes_recv", 0)) / dt_net)
+            result["net_tx_bytes_s"] = round((net.bytes_sent - _net_prev.get("bytes_sent", 0)) / dt_net)
+            result["net_rx_pps"] = int((net.packets_recv - _net_prev.get("packets_recv", 0)) / dt_net)
+            result["net_tx_pps"] = int((net.packets_sent - _net_prev.get("packets_sent", 0)) / dt_net)
+        else:
+            # First call — zero deltas, will compute on next refresh
+            for k in ("net_rx_bytes_s", "net_tx_bytes_s", "net_rx_pps", "net_tx_pps"):
+                result[k] = 0
+        _net_prev = {
+            "bytes_sent": net.bytes_sent, "bytes_recv": net.bytes_recv,
+            "packets_sent": net.packets_sent, "packets_recv": net.packets_recv,
+            "ts": now,
+        }
+    except Exception as exc:
+        log.debug("net_io_counters failed: %s", exc)
+
+    # ── Disk IO delta (nvme0n1 read/write MB/s, busy %) ────────────────────────────
+    try:
+        dio_all = psutil.disk_io_counters(perdisk=True)
+        # Prefer nvme0n1; fall back to aggregated counters if not present
+        dio = dio_all.get("nvme0n1") or psutil.disk_io_counters()
+        dt_disk = now - _disk_prev.get("ts", now)
+        if dt_disk > 0 and _disk_prev:
+            result["disk_read_bytes_s"] = round(
+                (dio.read_bytes - _disk_prev.get("read_bytes", 0)) / dt_disk
+            )
+            result["disk_write_bytes_s"] = round(
+                (dio.write_bytes - _disk_prev.get("write_bytes", 0)) / dt_disk
+            )
+            busy_us = dio.busy_time - _disk_prev.get("busy_time", dio.busy_time)
+            result["disk_busy_pct"] = round(min(100.0, busy_us / 1e6 * 100 / dt_disk), 1)
+        else:
+            # First call — zero deltas
+            for k in ("disk_read_bytes_s", "disk_write_bytes_s", "disk_busy_pct"):
+                result[k] = 0
+        _disk_prev = {
+            "read_bytes": dio.read_bytes, "write_bytes": dio.write_bytes,
+            "busy_time": dio.busy_time, "ts": now,
+        }
+    except Exception as exc:
+        log.debug("disk_io_counters failed: %s", exc)
 
     # ── GPU stats — three sources in priority order ────────────────────────────
     # 1. Remote GPU stats service (gpu_stats_server.py on DGX Spark, port 11435)

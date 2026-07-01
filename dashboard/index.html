@@ -77,7 +77,7 @@ nav{position:sticky;top:0;z-index:100;background:var(--surface);border-bottom:2p
 .panel-body{padding:9px 10px}
 .cw{position:relative;width:100%}
 .cw100{height:100px}.cw120{height:120px}.cw130{height:130px}
-.cw160{height:160px}.cw180{height:180px}.cw210{height:210px}
+.cw80{height:80px}.cww{height:100px}.cw120{height:120px}.cw130{height:130px}.cw160{height:160px}.cw180{height:180px}.cw210{height:210px}
 
 /* ── RESOURCE BARS ── */
 .rb{display:flex;align-items:center;gap:6px;margin-bottom:4px}
@@ -351,6 +351,56 @@ tr:hover td{background:rgba(255,255,255,.02)}
         </div>
       </div>
     </div>
+
+   <!-- CPU (20 cores) -->
+   <div class="panel" data-id="cpu">
+     <div class="ph grab">
+       <span><span class="drag-hint">⠿</span>CPU Utilization</span>
+       <span id="cpu-avg-badge" class="ph-badge nv">— avg</span>
+       <span class="panel-grip">☰</span>
+     </div>
+     <div class="panel-body">
+       <div class="cw cw100" id="cpu-barchart-wrap"><canvas id="cCpuBar"></canvas></div>
+       <div class="cw cw80" style="margin-top:6px"><canvas id="cCpuAvg"></canvas></div>
+     </div>
+   </div>
+
+   <!-- Disk I/O -->
+   <div class="panel" data-id="diskio">
+     <div class="ph grab">
+       <span><span class="drag-hint">⠿</span>Disk I/O</span>
+       <span id="disk-busy-badge" class="ph-badge">0% busy</span>
+       <span class="panel-grip">☰</span>
+     </div>
+     <div class="panel-body">
+       <div class="cw cw120"><canvas id="cDisk"></canvas></div>
+       <div style="margin-top:6px;display:flex;gap:4px;align-items:center">
+         <span style="font-size:.53rem;text-transform:uppercase;color:var(--sub);font-weight:700;min-width:38px">Busy</span>
+         <div class="rb-bg" style="flex:1"><div class="rb-fill rc-nv" id="bar-disk-busy" style="width:0%"></div></div>
+         <span id="val-disk-busy" style="font-size:.62rem;font-family:var(--mono);min-width:36px;text-align:right">—</span>
+       </div>
+       <div style="margin-top:4px;display:flex;gap:14px;font-size:.62rem">
+         <span>Rd <span id="peak-disk-rd" style="color:var(--nv);font-family:var(--mono)">—</span> MB/s</span>
+         <span>Wr <span id="peak-disk-wr" style="color:var(--blue);font-family:var(--mono)">—</span> MB/s</span>
+       </div>
+     </div>
+   </div>
+
+   <!-- Network I/O -->
+   <div class="panel" data-id="netio">
+     <div class="ph grab">
+       <span><span class="drag-hint">⠿</span>Network I/O</span>
+       <span id="net-total-badge" class="ph-badge bl">—</span>
+       <span class="panel-grip">☰</span>
+     </div>
+     <div class="panel-body">
+       <div class="cw cw120"><canvas id="cNet"></canvas></div>
+       <div style="margin-top:5px;display:flex;gap:14px;font-size:.62rem">
+         <span>↓ Peak <span id="peak-net-rx" style="color:var(--nv);font-family:var(--mono)">—</span> MB/s</span>
+         <span>↑ Peak <span id="peak-net-tx" style="color:var(--teal);font-family:var(--mono)">—</span> MB/s</span>
+       </div>
+     </div>
+   </div>
 
   </div><!-- /live-grid -->
 </div><!-- /page-live -->
@@ -1012,6 +1062,158 @@ function renderDiskModels(models) {
   ).join('');
 }
 
+// ── CPU per-core bar chart + average line ────────────────────────────────
+const _cpuAvgHist = [];          // rolling avg CPU% over time
+let _nCpuCores = 0;
+const HIST_MAX_RES = 120;        // same as GPU hist window
+
+function cpuBarColor(v) {
+  // green(0-50) → yellow(50-80) → red(80-100+)
+  if (v <= 50) return '#76b900';
+  if (v <= 80) {
+    const t = (v - 50) / 30;
+    const r = Math.round(118 + (245 - 118) * t);
+    const g = Math.round(185 + (166 - 185) * t);
+    const b = Math.round(0 + (35 - 0) * t);
+    return `rgb(${r},${g},${b})`;
+  }
+  const t = Math.min((v - 80) / 20, 1);
+  const r = Math.round(245 + (224 - 245) * t);
+  const g = Math.round(166 + (64 - 166) * t);
+  const b = Math.round(35 + (64 - 35) * t);
+  return `rgb(${r},${g},${b})`;
+}
+
+function initCpuCharts() {
+  // Per-core bar chart — initialized with empty data when sys arrives
+  if (!$('cCpuBar')) return;
+  mkChart('cCpuBar', {
+    type: 'bar',
+    data: { labels: [], datasets: [{data:[], backgroundColor:['#333'], borderRadius:1, barPercentage:0.85}] },
+  }, {
+    plugins: {legend:{display:false}, tooltip:{mode:'index',intersect:false,bodyFont:{size:9}}},
+    scales: {
+      x: {ticks:{color:'#444',font:{size:7,maxTicksLimit:20},maxRotation:0,autoSkip:false},grid:{display:false}},
+      y: _yOpts(100),
+    },
+  });
+
+  // Average CPU% rolling line
+  mkChart('cCpuAvg', {
+    type: 'line',
+    data: { labels:[], datasets:[{label:'Avg %',data:[],fill:true,borderColor:'#76b900',backgroundColor:'rgba(118,185,0,.08)',borderWidth:1.2,tension:.35,pointRadius:0}] },
+  }, { scales:{x:_xOptsTime,y:_yOpts(100)} });
+}
+
+function updateCpuCharts(cpuPer, cpuPercent) {
+  const labels = (cpuPer||[]).map((_,i)=>`#${i}`);
+  // Bar chart
+  const bc = _charts['cCpuBar'];
+  if (bc) {
+    bc.data.labels = labels;
+    bc.data.datasets[0].data = cpuPer.map(v=>v||0);
+    bc.data.datasets[0].backgroundColor = cpuPer.map(cpuBarColor);
+    bc.update('none');
+  }
+
+  // Average line — collect point and push to rolling history
+  const avg = (cpuPercent != null) ? cpuPercent : (cpuPer?.reduce((a,b)=>a+(b||0),0)/(cpuPer?.length||1)) || 0;
+  _cpuAvgHist.push(avg);
+  if (_cpuAvgHist.length > HIST_MAX_RES) _cpuAvgHist.shift();
+
+  const ac = _charts['cCpuAvg'];
+  if (ac) {
+    ac.data.labels = makeTimeLabels(_cpuAvgHist.length, HIST_INTERVAL);
+    ac.data.datasets[0].data = _cpuAvgHist;
+    ac.update('none');
+  }
+
+  // Badge
+  const badge = $('cpu-avg-badge');
+  if (badge) badge.textContent = `${avg.toFixed(1)}% avg`;
+}
+
+// ── Disk I/O area chart ──────────────────────────────────────────────────
+const _diskHist = [];   // [{rd, wr, busy}]
+let _peakDiskRd=0, _peakDiskWr=0;
+
+function initDiskCharts() {
+  mkChart('cDisk', {
+    type: 'line',
+    data: { labels:[], datasets:[
+      {label:'Read MB/s',data:[],fill:true,borderColor:'#76b900',backgroundColor:'rgba(118,185,0,.1)',borderWidth:1.2,tension:.3,pointRadius:0},
+      {label:'Write MB/s',data:[],fill:true,borderColor:'#00a3e0',backgroundColor:'rgba(0,163,224,.1)',borderWidth:1.2,tension:.3,pointRadius:0},
+    ]},
+  }, {scales:{x:_xOptsTime,y:_yOpts()}});
+}
+
+function updateDiskCharts(sys) {
+  const rdBytes = sys.disk_read_bytes_s || 0;
+  const wrBytes = sys.disk_write_bytes_s || 0;
+  const busy = sys.disk_busy_pct ?? null;
+  const rdMbs = Math.round(rdBytes / 1024 / 1024 * 10) / 10;
+  const wrMbs = Math.round(wrBytes / 1024 / 1024 * 10) / 10;
+
+  _diskHist.push({rd: rdMbs, wr: wrMbs, busy});
+  if (_diskHist.length > HIST_MAX_RES) _diskHist.shift();
+
+  const dc = _charts['cDisk'];
+  if (dc) {
+    dc.data.labels = makeTimeLabels(_diskHist.length, HIST_INTERVAL);
+    dc.data.datasets[0].data = _diskHist.map(h=>h.rd);
+    dc.data.datasets[1].data = _diskHist.map(h=>h.wr);
+    dc.update('none');
+  }
+
+  // Busy bar & badge
+  if (busy != null) {
+    setBar('bar-disk-busy','val-disk-busy', busy, `${busy}%`);
+    const bb = $('disk-busy-badge'); if(bb) bb.textContent = `${busy}% busy`;
+  }
+  // Peaks
+  if (rdMbs > _peakDiskRd) { _peakDiskRd = rdMbs; $('peak-disk-rd').textContent = _peakDiskRd.toFixed(1); }
+  if (wrMbs > _peakDiskWr) { _peakDiskWr = wrMbs; $('peak-disk-wr').textContent = _peakDiskWr.toFixed(1); }
+}
+
+// ── Network I/O area chart ───────────────────────────────────────────────
+const _netHist = [];   // [{rx, tx}]
+let _peakNetRx=0, _peakNetTx=0;
+
+function initNetCharts() {
+  mkChart('cNet', {
+    type: 'line',
+    data: { labels:[], datasets:[
+      {label:'↓ RX MB/s',data:[],fill:true,borderColor:'#76b900',backgroundColor:'rgba(118,185,0,.1)',borderWidth:1.2,tension:.3,pointRadius:0},
+      {label:'↑ TX MB/s',data:[],fill:true,borderColor:'#00c9b1',backgroundColor:'rgba(0,201,177,.1)',borderWidth:1.2,tension:.3,pointRadius:0},
+    ]},
+  }, {scales:{x:_xOptsTime,y:_yOpts()}});
+}
+
+function updateNetCharts(sys) {
+  const rxBytes = sys.net_rx_bytes_s || 0;
+  const txBytes = sys.net_tx_bytes_s || 0;
+  const rxMbs = Math.round(rxBytes / 1024 / 1024 * 10) / 10;
+  const txMbs = Math.round(txBytes / 1024 / 1024 * 10) / 10;
+
+  _netHist.push({rx: rxMbs, tx: txMbs});
+  if (_netHist.length > HIST_MAX_RES) _netHist.shift();
+
+  const nc = _charts['cNet'];
+  if (nc) {
+    nc.data.labels = makeTimeLabels(_netHist.length, HIST_INTERVAL);
+    nc.data.datasets[0].data = _netHist.map(h=>h.rx);
+    nc.data.datasets[1].data = _netHist.map(h=>h.tx);
+    nc.update('none');
+  }
+
+  // Peaks & total badge
+  if (rxMbs > _peakNetRx) { _peakNetRx = rxMbs; $('peak-net-rx').textContent = _peakNetRx.toFixed(1); }
+  if (txMbs > _peakNetTx) { _peakNetTx = txMbs; $('peak-net-tx').textContent = _peakNetTx.toFixed(1); }
+  const total = rxMbs + txMbs;
+  const nb = $('net-total-badge');
+  if (nb && total > 0) nb.textContent = `${total.toFixed(1)} MB/s`;
+}
+
 // ── System bars ───────────────────────────────────────────────────────────
 function updateSysbar(sys) {
   if (!sys) return;
@@ -1019,11 +1221,22 @@ function updateSysbar(sys) {
   setBar('bar-ram','val-ram', sys.ram_percent, sys.ram_total_gb ? `${sys.ram_used_gb}/${sys.ram_total_gb}GB` : '—');
   setBar('bar-disk','val-disk', sys.disk_percent, sys.disk_total_gb ? `${sys.disk_used_gb}/${sys.disk_total_gb}GB` : '—');
   // GPU charts — only populate when real GPU data is available.
-  // CPU% is shown in the system bars above; never synthesize a CPU entry here.
   const gpus = sys.gpus ?? [];
   collectPt(gpus, sys.ram_percent);
   if (gpus.length) updateGpuCharts(gpus, sys.ram_percent);
   if (sys.ollama_models) renderDiskModels(sys.ollama_models);
+
+  // ── New system resource charts ────────────────────────────────────────────
+  if (sys.cpu_per_core?.length) {
+    if (!_charts['cCpuBar']) initCpuCharts();
+    updateCpuCharts(sys.cpu_per_core, sys.cpu_percent);
+  }
+  // Disk IO — always try; will show zeros if backend doesn't provide delta fields
+  if (!_charts['cDisk']){initDiskCharts();}
+  updateDiskCharts(sys);
+  // Network IO
+  if (!_charts['cNet']){initNetCharts();}
+  updateNetCharts(sys);
 }
 
 // ── Event log ─────────────────────────────────────────────────────────────
@@ -1071,8 +1284,13 @@ async function refreshLive() {
     if (d.sys) updateSysbar(d.sys);
     if (d.tps_history?.length) updateTpsChart(d.tps_history, d.combined_tps||0);
 
-    const recTtft = (d.history||[]).filter(r=>r.ttft>0).slice(0,10);
-    if (recTtft.length) $('avg-ttft').textContent = (recTtft.reduce((s,r)=>s+r.ttft,0)/recTtft.length*1000).toFixed(0)+'ms';
+    const recTtft = (d.history||[]).filter(r => (r.ttft_ms ?? r.ttft ?? 0) > 0).slice(0,10);
+    if (recTtft.length) {
+      const avgTtftMs = recTtft.reduce((s,r) => s + (r.ttft_ms ?? r.ttft ?? 0), 0) / recTtft.length;
+      $('avg-ttft').textContent = avgTtftMs.toFixed(0) + 'ms';
+    } else {
+      $('avg-ttft').textContent = '—';
+    }
 
     const detail = d.active_requests_detail||[];
     $('tbl-active').innerHTML = detail.length
@@ -1083,7 +1301,7 @@ async function refreshLive() {
           <td style="color:var(--purple);font-family:var(--mono)">${nf(r.total_tokens)}</td>
           <td style="color:var(--blue);font-family:var(--mono)">${(r.tps||0).toFixed(1)}</td>
           <td style="color:var(--yellow);font-family:var(--mono)">${(r.elapsed||0).toFixed(1)}s</td>
-          <td style="color:var(--sub);font-family:var(--mono)">${r.ttft?r.ttft.toFixed(0)+'ms':'—'}</td>
+          <td style="color:var(--sub);font-family:var(--mono)">${(r.ttft_ms ?? r.ttft) != null ? ((r.ttft_ms ?? r.ttft)).toFixed(0)+'ms' : '—'}</td>
         </tr>`).join('')
       : '<tr><td colspan="7" style="text-align:center;color:var(--sub);padding:12px">Idle</td></tr>';
 
@@ -1097,7 +1315,7 @@ async function refreshLive() {
           <td style="color:var(--purple);font-family:var(--mono)">${nf(r.total_tokens)}</td>
           <td style="color:var(--blue);font-family:var(--mono)">${(r.tps||0).toFixed(1)}</td>
           <td style="font-family:var(--mono)">${(r.duration||0).toFixed(1)}s</td>
-          <td style="color:var(--sub);font-family:var(--mono)">${r.ttft!=null?(r.ttft*1000).toFixed(0)+'ms':'—'}</td>
+          <td style="color:var(--sub);font-family:var(--mono)">${(r.ttft_ms ?? r.ttft ?? null) != null ? ((r.ttft_ms ?? r.ttft)).toFixed(0)+'ms' : '—'}</td>
         </tr>`).join('')
       : '<tr><td colspan="8" style="text-align:center;color:var(--sub);padding:8px">—</td></tr>';
 

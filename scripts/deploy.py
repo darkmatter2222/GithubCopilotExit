@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Deploy LLM Proxy to Databricks (192.168.86.48).
+Deploy LLM Proxy to Data Brick (192.168.86.48).
 
 Architecture (new):
-  - gcopilot-proxy runs on Databricks, on docucraft_docucraft-network
+  - gcopilot-proxy runs on Data Brick, on docucraft_docucraft-network
   - nginx upstream 'gcopilot-proxy' resolves via Docker DNS (container name)
   - DGX Spark runs Ollama only (port 11434) — no proxy, no dashboard
-  - gcopilot-dashboard also on Databricks, uses http://gcopilot-proxy:8001 as backend
+  - gcopilot-dashboard also on Data Brick, uses http://gcopilot-proxy:8001 as backend
 
 Usage:
     python scripts/deploy.py
@@ -107,11 +107,11 @@ def build_archive() -> Path:
 
 def main():
     print("=" * 60)
-    print("  LLM Proxy — Deploy to Databricks (192.168.86.48)")
+    print("  LLM Proxy — Deploy to Data Brick (192.168.86.48)")
     print("=" * 60)
 
     env = load_env()
-    # Proxy on Databricks talks to DGX Ollama over LAN
+    # Proxy on Data Brick talks to DGX Ollama over LAN
     ollama_url = env.get("DATABRICKS_OLLAMA_URL", "http://192.168.86.39:11434")
     mongo_uri  = env.get("MONGO_URI", "")
     mongo_db   = env.get("MONGO_DB", "radiacode")
@@ -128,7 +128,7 @@ def main():
     gpu_mem_total = env.get("GPU_MEM_TOTAL_MB", "124928")
 
     host = _ssh_host()
-    print(f"\nTarget  : {host} (Databricks)")
+    print(f"\nTarget  : {host} (Data Brick)")
     print(f"Ollama  : {ollama_url}  (DGX Spark)")
     print(f"vLLM    : {vllm_url or '(none)'}")
     print(f"MongoDB : {'enabled' if mongo_uri else 'disabled (memory-only)'}")
@@ -139,15 +139,15 @@ def main():
     archive = build_archive()
     print(f"  Archive: {archive} ({archive.stat().st_size // 1024} KB)")
 
-    # ── 2. Upload to Databricks ──
-    print("\n[2/5] Uploading to Databricks…")
+    # ── 2. Upload to Data Brick ──
+    print("\n[2/5] Uploading to Data Brick…")
     run(f'ssh {host} "mkdir -p ~/proxy-deploy"')
     run(f'scp "{archive}" {host}:~/proxy-deploy/proxy-deploy.tar.gz')
     ssh("cd ~/proxy-deploy && tar xzf proxy-deploy.tar.gz", host=host)
     print("  Upload complete")
 
-    # ── 3. Build Docker image on Databricks ──
-    print("\n[3/5] Building Docker image on Databricks…")
+    # ── 3. Build Docker image on Data Brick ──
+    print("\n[3/5] Building Docker image on Data Brick…")
     ssh(f"cd ~/proxy-deploy && docker build --pull=false -t {IMAGE_NAME} . 2>&1 | tail -5",
         host=host)
 

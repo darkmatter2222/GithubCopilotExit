@@ -16,7 +16,7 @@
          ┌─────────────┼──────────────┐
          ▼             ▼              ▼
    ┌──────────┐  ┌──────────┐   ┌──────────────┐
-   │ DGX      │  │ Databrick│   │ External     │
+   │ DGX      │  │ Data Brick│   │ External     │
    │ Spark    │  │ (86.48)  │   │ Browser      │
    │ (86.39)  │  │          │   │              │
    ├──────────┤  ├──────────┤   └───────┬──────┘
@@ -43,7 +43,7 @@ The LLM dashboard can be served remotely behind an nginx reverse proxy (e.g., `s
 
 **Data flow:** Browser → nginx (`/copilot/`) → serve.py (:3002) → gcopilot-proxy container (:8001) → Ollama on DGX Spark (:11434).
 - **PROXY_PATH_PREFIX=/copilot** — injected into HTML as `window.__BASE_PATH` so browser `pFetch()` calls hit the correct nginx location block (`/copilot/stats`, `/copilot/v1/models`, etc.)
-- **PROXY_BACKEND=http://gcopilot-proxy:8001** — serve.py server-side proxy target. Uses Docker container name (both containers on `docucraft_docucraft-network`). Do NOT use the DGX Spark IP here — gcopilot-proxy runs on Databricks, not DGX Spark.
+- **PROXY_BACKEND=http://gcopilot-proxy:8001** — serve.py server-side proxy target. Uses Docker container name (both containers on `docucraft_docucraft-network`). Do NOT use the DGX Spark IP here — gcopilot-proxy runs on Data Brick, not DGX Spark.
 - Nginx upstream needs `resolver 127.0.0.11;` (Docker embedded DNS) to resolve container names on shared networks.
 
 ### Data & MongoDB
@@ -277,7 +277,7 @@ ssh dgxspark "ollama rm old-model-name"
 
 ```powershell
 # From repo root on Windows — reads credentials from .env, builds the image on
-# Databricks via SSH/SCP, and restarts the container with the correct env vars.
+# Data Brick via SSH/SCP, and restarts the container with the correct env vars.
 python scripts/deploy_dashboard.py
 ```
 
@@ -388,9 +388,9 @@ Dashboard: `http://localhost:8001/dashboard`
 
 ---
 
-## Databricks Dashboard Deployment
+## Data Brick Dashboard Deployment
 
-The dashboard runs on Databricks (192.168.86.48) behind nginx ingress at `/copilot/` path prefix.
+The dashboard runs on Data Brick (192.168.86.48) behind nginx ingress at `/copilot/` path prefix.
 
 ### Architecture
 ```
@@ -400,7 +400,7 @@ Browser → nginx /copilot/ → serve.py:3002 → DGX Spark :8001
 
 ### Deploy Checklist (DO NOT SKIP STEPS)
 1. Edit `dashboard/index.html` and/or `dashboard/serve.py` locally
-2. SCP files to Databricks: `scp dashboard/* Databricks:~/GithubCopilotExit/dashboard/`
+2. SCP files to Data Brick: `scp dashboard/* Data Brick:~/GithubCopilotExit/dashboard/`
 3. Build image with **--no-cache**: `docker build --no-cache -f Dockerfile.deploy -t gcopilot-dashboard .`
 4. Stop + remove old container: `docker stop gcopilot-dashboard && docker rm gcopilot-dashboard`
 5. Run new container with EXACT env vars:
@@ -429,9 +429,23 @@ Browser → nginx /copilot/ → serve.py:3002 → DGX Spark :8001
 - **serve.py must normalize paths** — `_norm_path = self.path.split("?")[0]` before routing
 
 ### Extensions
-Use `validate-Databricks-dashboard` and `sync-dashboard-Databricks` tools from deploy-dgx extension.
+Use `validate-Data Brick-dashboard` and `sync-dashboard-Data Brick` tools from deploy-dgx extension.
 
 ---
+
+## Dashboard Live Metrics + Deployment Workflow
+
+- The live TPS / active-request widgets are driven by `proxy/tracker.py`. When nothing is running, the `/stats` payload must report `active_requests: 0`, `combined_tps: 0`, and a zero-value `tps_history` entry.
+- TTFT is emitted as `ttft_ms` by the tracker and rendered by both dashboard entry points (`dashboard/index.html` and `proxy/dashboard.html`).
+- Deploying the dashboard alone is not enough when the tracker changed: the proxy container must be redeployed as well because the tracker lives inside the proxy process.
+- Recommended validation sequence:
+  1. `python scripts/deploy_dashboard.py`
+  2. `python scripts/deploy.py`
+  3. `curl -H "Authorization: Bearer <PROXY_API_KEY>" http://192.168.86.48:8001/stats`
+  4. Confirm the payload shows `active_requests: 0`, `combined_tps: 0`, and no stale active-request detail while idle.
+- Operational tooling is available through the Copilot extensions:
+  - `.github/extensions/deploy-dgx/extension.mjs` exposes deploy/health tools for the proxy and dashboard.
+  - `.github/extensions/system-tests/extension.mjs` exposes `run-system-tests`, `test-auth`, `test-dashboard`, `test-database`, `test-proxy-to-dgx`, and `test-proxy-to-db`.
 
 ## Repository Structure
 
@@ -462,7 +476,7 @@ scripts/
   copilot-setup-steps.yml    Model management workflow reference
   system-health-check.yml    Full health check workflow (manual + scheduled; self-hosted runner for live checks)
 nginx/
-  current_nginx.conf   Canonical nginx config (copy to Databricks ~/current_nginx.conf, then use update-nginx)
+  current_nginx.conf   Canonical nginx config (copy to Data Brick ~/current_nginx.conf, then use update-nginx)
 .env.example           Config template — copy to .env and fill in values
 AGENTS.md              This file
 TROUBLESHOOTING.md     Common bugs, fixes, and prevention guidelines

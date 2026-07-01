@@ -949,8 +949,13 @@ async function refreshLive() {
     if (d.sys) updateSysbar(d.sys);
     if (d.tps_history?.length) updateTpsChart(d.tps_history, d.combined_tps||0);
 
-    const recTtft = (d.history||[]).filter(r=>r.ttft>0).slice(0,10);
-    if (recTtft.length) $('avg-ttft').textContent = (recTtft.reduce((s,r)=>s+r.ttft,0)/recTtft.length*1000).toFixed(0)+'ms';
+    const recTtft = (d.history||[]).filter(r => (r.ttft_ms ?? r.ttft ?? 0) > 0).slice(0,10);
+    if (recTtft.length) {
+      const avgTtftMs = recTtft.reduce((s,r) => s + (r.ttft_ms ?? r.ttft ?? 0), 0) / recTtft.length;
+      $('avg-ttft').textContent = avgTtftMs.toFixed(0) + 'ms';
+    } else {
+      $('avg-ttft').textContent = '—';
+    }
 
     const detail = d.active_requests_detail||[];
     $('tbl-active').innerHTML = detail.length
@@ -961,7 +966,7 @@ async function refreshLive() {
           <td style="color:var(--purple);font-family:var(--mono)">${nf(r.total_tokens)}</td>
           <td style="color:var(--blue);font-family:var(--mono)">${(r.tps||0).toFixed(1)}</td>
           <td style="color:var(--yellow);font-family:var(--mono)">${(r.elapsed||0).toFixed(1)}s</td>
-          <td style="color:var(--sub);font-family:var(--mono)">${r.ttft?r.ttft.toFixed(0)+'ms':'—'}</td>
+          <td style="color:var(--sub);font-family:var(--mono)">${(r.ttft_ms ?? r.ttft) != null ? ((r.ttft_ms ?? r.ttft)).toFixed(0)+'ms' : '—'}</td>
         </tr>`).join('')
       : '<tr><td colspan="7" style="text-align:center;color:var(--sub);padding:12px">Idle</td></tr>';
 
@@ -975,7 +980,7 @@ async function refreshLive() {
           <td style="color:var(--purple);font-family:var(--mono)">${nf(r.total_tokens)}</td>
           <td style="color:var(--blue);font-family:var(--mono)">${(r.tps||0).toFixed(1)}</td>
           <td style="font-family:var(--mono)">${(r.duration||0).toFixed(1)}s</td>
-          <td style="color:var(--sub);font-family:var(--mono)">${r.ttft!=null?(r.ttft*1000).toFixed(0)+'ms':'—'}</td>
+          <td style="color:var(--sub);font-family:var(--mono)">${(r.ttft_ms ?? r.ttft ?? null) != null ? ((r.ttft_ms ?? r.ttft)).toFixed(0)+'ms' : '—'}</td>
         </tr>`).join('')
       : '<tr><td colspan="8" style="text-align:center;color:var(--sub);padding:8px">—</td></tr>';
 

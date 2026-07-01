@@ -2,7 +2,7 @@
 """
 GPU Stats Server - lightweight HTTP service that exposes real-time GPU metrics.
 
-Run this on DGX Spark alongside Ollama so the gcopilot-proxy on Databricks
+Run this on DGX Spark alongside Ollama so the gcopilot-proxy on Data Brick
 (which has no local GPU) can read real-time GPU utilization and VRAM stats.
 
 For the GB10 Grace Blackwell (unified memory), nvidia-smi reports [N/A] for

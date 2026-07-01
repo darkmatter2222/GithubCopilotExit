@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Deploy the LLM Proxy Dashboard to Databrick (192.168.86.48).
+Deploy the LLM Proxy Dashboard to Data Brick (192.168.86.48).
 
 This replaces the manual docker-run steps in AGENTS.md with a repeatable,
 .env-driven script — avoiding stale/incorrect credentials from hand-typed
 docker commands (e.g. shell history expansion mangling "!" in passwords).
 
 Architecture:
-  - gcopilot-dashboard runs on Databrick, on docucraft_docucraft-network
+  - gcopilot-dashboard runs on Data Brick, on docucraft_docucraft-network
   - Talks to gcopilot-proxy via Docker DNS name (http://gcopilot-proxy:8001)
   - Exposed to LAN/internet via nginx ingress at /copilot/ (see nginx/current_nginx.conf)
 
@@ -114,12 +114,12 @@ def _remote_env_file(env: dict) -> str:
 
 def main():
     print("=" * 60)
-    print("  LLM Proxy Dashboard — Deploy to Databrick (192.168.86.48)")
+    print("  LLM Proxy Dashboard — Deploy to Data Brick (192.168.86.48)")
     print("=" * 60)
 
     env = load_env()
     host = _ssh_host()
-    print(f"\nTarget  : {host} (Databrick)")
+    print(f"\nTarget  : {host} (Data Brick)")
     print(f"Network : {DOCKER_NETWORK}")
 
     # ── 1. Build archive ──
@@ -128,7 +128,7 @@ def main():
     print(f"  Archive: {archive} ({archive.stat().st_size // 1024} KB)")
 
     # ── 2. Upload archive + env file ──
-    print("\n[2/6] Uploading to Databrick…")
+    print("\n[2/6] Uploading to Data Brick…")
     run(f'ssh {host} "mkdir -p ~/dashboard-deploy"')
     run(f'scp "{archive}" {host}:~/dashboard-deploy/dashboard-deploy.tar.gz')
     ssh("cd ~/dashboard-deploy && tar xzf dashboard-deploy.tar.gz", host=host)
@@ -142,7 +142,7 @@ def main():
     print("  Upload complete")
 
     # ── 3. Build Docker image ──
-    print("\n[3/6] Building Docker image on Databrick…")
+    print("\n[3/6] Building Docker image on Data Brick…")
     ssh(f"cd ~/dashboard-deploy && docker build --no-cache -f Dockerfile.deploy "
         f"-t {IMAGE_NAME} . 2>&1 | tail -10", host=host)
 

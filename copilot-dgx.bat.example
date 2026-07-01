@@ -133,7 +133,7 @@ echo   GitHub MCP tools:      ALL
 echo   Experimental:          ON
 echo   Autopilot continues:   Unlimited
 echo   Voice input:           Use /voice inside Copilot CLI
-echo   Traffic routed via:    Databricks (192.168.86.48) → DGX Spark (192.168.86.39)
+echo   Traffic routed via:    Data Brick (192.168.86.48) → DGX Spark (192.168.86.39)
 echo ------------------------------------------------------------
 echo.
 echo In-session setup commands:

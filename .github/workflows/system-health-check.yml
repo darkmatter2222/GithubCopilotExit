@@ -1,8 +1,8 @@
 name: "System Health Check — LLM Stack"
 
 # Tests all subsystems of the LLM stack:
-#   DGX Spark (Ollama) → gcopilot-proxy (Databricks) → nginx → clients
-#   gcopilot-proxy → MongoDB (Databricks)
+#   DGX Spark (Ollama) → gcopilot-proxy (Data Brick) → nginx → clients
+#   gcopilot-proxy → MongoDB (Data Brick)
 #
 # Can run on GitHub-hosted runners (documents what to test + generates report)
 # or on a self-hosted runner inside the private network (actually executes checks).
@@ -170,7 +170,7 @@ jobs:
                   cat << 'CMD'
                   ── DASHBOARD TESTS ────────────────────────────────────────
                   
-                  # Container health (run on Databricks via SSH)
+                  # Container health (run on Data Brick via SSH)
                   ssh darkmatter2222@192.168.86.48 \
                     "docker inspect gcopilot-dashboard --format '{{.State.Running}}'"
                   # Expected: true
@@ -205,7 +205,7 @@ jobs:
                   cat << 'CMD'
                   ── DATABASE (MONGODB) TESTS ───────────────────────────────
                   
-                  # MongoDB port reachable from Databricks
+                  # MongoDB port reachable from Data Brick
                   ssh darkmatter2222@192.168.86.48 \
                     "nc -z 192.168.86.48 27017 && echo open || echo closed"
                   # Expected: open
@@ -320,7 +320,7 @@ jobs:
 
     # ══════════════════════════════════════════════════════════════════════════
     # JOB 2: Self-hosted runner (private network — LIVE checks)
-    # Requires a GitHub Actions runner registered on 192.168.86.48 (Databricks).
+    # Requires a GitHub Actions runner registered on 192.168.86.48 (Data Brick).
     # Setup: https://docs.github.com/en/actions/hosting-your-own-runners
     # ══════════════════════════════════════════════════════════════════════════
     health-check-live:
