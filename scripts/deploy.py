@@ -21,15 +21,17 @@ import sys
 import subprocess
 import tarfile
 import tempfile
+import time
 from pathlib import Path
 
 REPO = Path(__file__).parent.parent
 DATABRICKS_HOST = "darkmatter2222@192.168.86.48"
-DATABRICKS_SSH_ALIAS = "databricks"  # optional alias; falls back to full host
+DATABRICKS_SSH_ALIAS = "databricks"  # matches ~/.ssh/config Host alias
 CONTAINER_NAME = "gcopilot-proxy"
 IMAGE_NAME = "gcopilot-proxy"
 PORT = 8001
 DOCKER_NETWORK = "docucraft_docucraft-network"
+
 
 # Files to include in the deployment archive
 PROXY_FILES = [
@@ -41,6 +43,10 @@ PROXY_FILES = [
     "proxy/requirements.txt",
     "proxy/Dockerfile",
 ]
+
+VERSION_FILE = REPO / ".version"
+if not VERSION_FILE.exists():
+    VERSION_FILE.write_text(f"{time.strftime('%Y%m%d.%H%M%S')}\n")
 
 
 def run(cmd: str, check=True) -> subprocess.CompletedProcess:
@@ -185,7 +191,6 @@ def main():
     )
 
     # ── Verify ──
-    import time
     print("\nWaiting for container to start...")
     time.sleep(5)
     result = ssh(f"curl -sf http://localhost:{PORT}/health", host=host, check=False)

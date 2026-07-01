@@ -247,7 +247,8 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             html = "<h1>Dashboard not found</h1>"
 
         injection = (f'<script>window.__PROXY_URL="{HTML_PROXY_URL}";'
-                     f'window.__BASE_PATH="{PROXY_PATH_PREFIX}";</script>')
+                     f'window.__BASE_PATH="{PROXY_PATH_PREFIX}";'
+                     f'window.__BUILD_VERSION="v1.0.0-{time.strftime("%Y%m%d-%H%M%S")}";</script>')
         if "</head>" in html:
             html = html.replace("</head>", injection + "\n</head>", 1)
 
@@ -279,6 +280,13 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             if not path.startswith("/"):
                 path = "/" + path
         return path
+
+    def _norm_with_query(self) -> str:
+        """Like _norm() but preserves the query string — needed when proxying
+        requests upstream so filters like ?days=7&limit=200 aren't dropped."""
+        path = self._norm()
+        query = self.path.split("?", 1)[1] if "?" in self.path else ""
+        return f"{path}?{query}" if query else path
 
     def do_GET(self):
         p = self._norm()
@@ -324,7 +332,7 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         # Proxy API requests to upstream
         for prefix in API_PREFIXES:
             if p.startswith(prefix):
-                _proxy_to_upstream(self, "/" + p.lstrip("/"))
+                _proxy_to_upstream(self, "/" + self._norm_with_query().lstrip("/"))
                 return
 
         super().do_GET()
@@ -346,7 +354,8 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                 token = _create_session()
                 self.send_response(302)
                 # Redirect to dashboard root with trailing slash
-                self.send_header("Location", (PROXY_PATH_PREFIX or "") + "/")
+                prefix = (PROXY_PATH_PREFIX or "") + "/"
+                self.send_header("Location", prefix)
                 self.send_header("Set-Cookie",
                                  f"session={token}; Path=/; HttpOnly; SameSite=Strict")
                 self.end_headers()
@@ -370,7 +379,7 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                 length = int(self.headers.get("Content-Length", 0))
                 body = self.rfile.read(length) if length > 0 else b""
                 ct = self.headers.get("Content-Type", "application/json")
-                _proxy_to_upstream(self, "/" + p.lstrip("/"),
+                _proxy_to_upstream(self, "/" + self._norm_with_query().lstrip("/"),
                                    method="POST", body=body, content_type=ct)
                 return
 
@@ -391,7 +400,7 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         # Proxy DELETE to upstream (e.g. /api/admin/keys/{key_id})
         for prefix in API_PREFIXES:
             if p.startswith(prefix):
-                _proxy_to_upstream(self, "/" + p.lstrip("/"), method="DELETE")
+                _proxy_to_upstream(self, "/" + self._norm_with_query().lstrip("/"), method="DELETE")
                 return
 
         self.send_response(404)

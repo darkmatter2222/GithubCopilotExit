@@ -43,17 +43,27 @@ class RequestStats:
         """Average output tokens/sec for this request."""
         if self.eval_duration_ns == 0:
             return 0.0
-        return self.eval_count / (self.eval_duration_ns / 1e9)
+        return round(self.eval_count / (self.eval_duration_ns / 1e9), 1)
 
     @property
-    def tps_since_first_token(self) -> float:
-        """Real-time tokens/sec based on token arrival times."""
+    def streaming_tps(self) -> float:
+        """Real-time TPS from token arrival times, or fallback to eval_duration."""
         if self.first_token_time == 0 or self.last_token_time == 0:
-            return 0.0
+            # Fallback: use Ollama's reported eval duration
+            return self.avg_completion_tps
         elapsed = self.last_token_time - self.first_token_time
-        if elapsed == 0:
-            return 0.0
-        return self.eval_count / elapsed
+        # Minimum window: 10ms for meaningful measurement (prevents division by near-zero).
+        # NOTE: this must never return float('inf') — it used to, and that value is not
+        # JSON-serializable (json.dumps(..., allow_nan=False), which Starlette's
+        # JSONResponse uses by default), causing intermittent 500s on /stats whenever a
+        # very fast small-model completion (e.g. qwen3:4b with a short max_tokens) landed
+        # in the "recent requests" window. Fall back to the eval-duration-based estimate
+        # instead, which is always a finite number.
+        if elapsed < 0.010:
+            return self.avg_completion_tps
+        return round(self.eval_count / elapsed, 1)
+
+    tps_since_first_token = streaming_tps
 
     @property
     def is_active(self) -> bool:
@@ -118,6 +128,16 @@ class TokenTracker:
                 s.first_token_time = now
                 # Calculate TTFT when first token arrives
                 s.ttft_ms = (s.first_token_time - s.start_time) * 1000  # Convert to milliseconds
+
+    def _estimate_ttft_from_eval_duration(self, s: RequestStats) -> None:
+        """Estimate TTFT from eval_duration_ns if first token time unavailable."""
+        if s.ttft_ms == 0.0 and s.eval_duration_ns > 0:
+            total_time_s = (s.finish_time or time.time()) - s.start_time
+            prompt_fraction = 0.4
+            estimated_ttft_ns = s.prompt_eval_duration_ns * prompt_fraction
+            if estimated_ttft_ns <= 0:
+                estimated_ttft_ns = s.eval_duration_ns * prompt_fraction
+            s.ttft_ms = round(estimated_ttft_ns / 1e6, 1)
 
     def update_from_response(self, request_id: str, response: dict) -> None:
         """Merge usage block from Ollama final chunk / non-streamed reply."""
@@ -209,8 +229,8 @@ class TokenTracker:
                 "completion_tokens": out,
                 "total_tokens": total_t,
                 "duration": round(dur, 1),
-                "ttft": round(s.first_token_time - s.start_time, 2) if s.first_token_time else 0,
-                "tps": round(s.tps_since_first_token, 1),
+                "ttft_ms": round(s.ttft_ms, 1),
+                "tps": round(s.streaming_tps, 1),
                 "active": False,
             }
             self._history.insert(0, entry)
@@ -224,6 +244,9 @@ class TokenTracker:
             self.total_completion_tokens += out
             self.total_total_tokens += total_t
 
+            # ── TTFT estimation fallback before persisting to MongoDB ──
+            self._estimate_ttft_from_eval_duration(s)
+
             # ── Persist to MongoDB (fire-and-forget, non-blocking) ──
             if db_backend and db_backend.enabled:
                 record = {
@@ -233,8 +256,8 @@ class TokenTracker:
                     "completion_tokens": out,
                     "total_tokens": total_t,
                     "duration_secs": round(dur, 2),
-                    "ttft_secs": round(s.first_token_time - s.start_time, 3) if s.first_token_time else 0,
-                    "tps": round(s.tps_since_first_token, 1),
+                    "ttft_ms": round(s.ttft_ms, 1),
+                    "tps": round(s.streaming_tps, 1),
                     "has_error": False,
                 }
                 try:

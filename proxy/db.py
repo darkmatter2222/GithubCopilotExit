@@ -7,7 +7,7 @@ import hashlib
 import os
 import secrets
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from bson import ObjectId
 import motor.motor_asyncio
 
@@ -81,6 +81,9 @@ class SessionDB:
             docs = await cursor.to_list(length=limit)
             for d in docs:
                 d["_id"] = str(d["_id"])
+                ts = d.get("timestamp")
+                if isinstance(ts, datetime):
+                    d["timestamp"] = ts.isoformat()
             return docs
         except Exception as e:
             print(f"[db warn] Failed to fetch requests: {e}")
@@ -91,7 +94,6 @@ class SessionDB:
         if not self.enabled:
             return []
         try:
-            from datetime import timedelta
             cutoff = datetime.now(timezone.utc) - timedelta(days=days)
             pipeline = [
                 {"$match": {"timestamp": {"$gte": cutoff}}},
@@ -120,7 +122,6 @@ class SessionDB:
         if not self.enabled:
             return []
         try:
-            from datetime import timedelta
             cutoff = datetime.now(timezone.utc) - timedelta(days=days)
             pipeline = [
                 {"$match": {"timestamp": {"$gte": cutoff}}},
@@ -150,7 +151,6 @@ class SessionDB:
         if not self.enabled:
             return {}
         try:
-            from datetime import timedelta
             cutoff = datetime.now(timezone.utc) - timedelta(days=days)
             pipeline = [
                 {"$match": {"timestamp": {"$gte": cutoff}}},
@@ -183,7 +183,6 @@ class SessionDB:
         if not self.enabled:
             return {}
         try:
-            from datetime import timedelta
             cutoff = datetime.now(timezone.utc) - timedelta(days=days)
             pipeline = [
                 {"$match": {"timestamp": {"$gte": cutoff}}},
@@ -211,7 +210,6 @@ class SessionDB:
         if not self.enabled:
             return []
         try:
-            from datetime import timedelta
             cutoff = datetime.now(timezone.utc) - timedelta(days=days)
             pipeline = [
                 {"$match": {"timestamp": {"$gte": cutoff}}},

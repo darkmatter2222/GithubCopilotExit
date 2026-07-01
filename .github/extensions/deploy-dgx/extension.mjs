@@ -1,16 +1,47 @@
 // Extension: deploy-dgx
-// Deploy proxy to Databricks and manage dashboard.
-// Architecture: DGX Spark (Ollama only) ← proxy ← Databricks nginx ← clients
+// Deploy proxy to DATABRICKS and manage dashboard.
+// Architecture: DGX Spark (Ollama only) ← proxy ← DATABRICKS nginx ← clients
 
 import { joinSession } from "@github/copilot-sdk/extension";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
 
 const exec = promisify(execFile);
 const isWin = globalThis.process?.platform === "win32";
 const shell = isWin ? "pwsh" : "bash";
 const shellFlag = isWin ? "-Command" : "-c";
-const API_KEY = process.env.COPILOT_PROVIDER_API_KEY || "";
+
+// ── .env fallback loader ─────────────────────────────────────────────────────
+// Credentials are normally injected into process.env by copilot-dgx.bat before
+// launching the CLI. When the CLI is launched any other way (plain `copilot`,
+// CI, another agent's shell), those vars are unset and every auth-dependent
+// check below would silently look like a fresh regression. To make these
+// tools reliable no matter how the session was started, fall back to reading
+// the repo-root .env file directly (never overrides real env vars already set).
+function loadDotEnvFallback() {
+    try {
+        const here = path.dirname(fileURLToPath(import.meta.url));
+        const envPath = path.resolve(here, "..", "..", "..", ".env"); // repo root
+        const text = readFileSync(envPath, "utf8");
+        for (const line of text.split(/\r?\n/)) {
+            const m = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/.exec(line);
+            if (!m) continue;
+            const [, key, rawVal] = m;
+            if (process.env[key] !== undefined && process.env[key] !== "") continue;
+            let val = rawVal.trim();
+            if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+                val = val.slice(1, -1);
+            }
+            process.env[key] = val;
+        }
+    } catch { /* .env not found — rely on process.env only, defaults will apply */ }
+}
+loadDotEnvFallback();
+
+const API_KEY = process.env.COPILOT_PROVIDER_API_KEY || process.env.PROXY_API_KEY || "";
 const DASH_USER = process.env.DASHBOARD_USERNAME || "darkmatter2222";
 const DASH_PASS = process.env.DASHBOARD_PASSWORD || "";
 const ADMIN_USER = process.env.ADMIN_USERNAME || "darkmatter2222";
@@ -22,9 +53,14 @@ function run(cmd) {
     return exec(shell, ["-NoProfile", "-NonInteractive", shellFlag, cmd]);
 }
 
+// IMPORTANT: invoke `ssh` directly via execFile with an argv array (no shell
+// in between) so `cmd` is forwarded to the remote host byte-for-byte. Building
+// this as a quoted string and re-parsing it through pwsh/bash (the old
+// approach) is fragile — the bash-style `'\''` escape trick used previously
+// is not valid PowerShell single-quoted string syntax, so any cmd containing
+// a literal `'` silently broke the remote command on Windows.
 async function ssh(host, cmd) {
-    const escaped = cmd.replace(/'/g, `'\\''`);
-    const { stdout } = await run(`ssh ${host} '${escaped}'`);
+    const { stdout } = await exec("ssh", ["-o", "ConnectTimeout=10", host, cmd]);
     return stdout.trim();
 }
 
@@ -40,17 +76,17 @@ async function curlCheck(url, extraArgs = "") {
 const session = await joinSession({
     hooks: {
         onSessionStart: async () => {
-            await session.log("LLM Stack tools loaded (Databricks proxy → DGX Ollama)", { level: "info", ephemeral: true });
+            await session.log("LLM Stack tools loaded (DATABRICKS proxy → DGX Ollama)", { level: "info", ephemeral: true });
         },
     },
     tools: [
         // ── DEPLOY ──────────────────────────────────────────────────────────────
         {
             name: "deploy-proxy",
-            description: "Deploy gcopilot-proxy (FastAPI) to Databricks. Builds Docker image from proxy/ source, stops old container, starts new one on docucraft_docucraft-network. DGX Spark runs Ollama only.",
+            description: "Deploy gcopilot-proxy (FastAPI) to DATABRICKS. Builds Docker image from proxy/ source, stops old container, starts new one on docucraft_docucraft-network. DGX Spark runs Ollama only.",
             parameters: { type: "object", properties: {} },
             handler: async () => {
-                await session.log("🚀 Deploying proxy to Databricks...");
+                await session.log("🚀 Deploying proxy to DATABRICKS...");
                 try {
                     const { stdout, stderr } = await run("python scripts\\deploy.py 2>&1");
                     const ok = stdout.includes("Deploy successful");
@@ -64,7 +100,7 @@ const session = await joinSession({
         },
         {
             name: "deploy-dashboard",
-            description: "Deploy gcopilot-dashboard (serve.py) to Databricks. SCPs dashboard/serve.py and index.html, rebuilds image with --no-cache, restarts container with correct env vars.",
+            description: "Deploy gcopilot-dashboard (serve.py) to DATABRICKS. SCPs dashboard/serve.py and index.html, rebuilds image with --no-cache, restarts container with correct env vars.",
             parameters: {
                 type: "object",
                 properties: {
@@ -72,7 +108,7 @@ const session = await joinSession({
                 }
             },
             handler: async (args) => {
-                await session.log("📦 Deploying dashboard to Databricks...");
+                await session.log("📦 Deploying dashboard to DATABRICKS...");
                 const key = args.api_key || API_KEY;
                 const steps = [];
                 try {
@@ -110,10 +146,10 @@ const session = await joinSession({
         },
         {
             name: "deploy-all",
-            description: "Deploy both proxy and dashboard to Databricks in sequence. Use after making code changes to proxy/ or dashboard/.",
+            description: "Deploy both proxy and dashboard to DATABRICKS in sequence. Use after making code changes to proxy/ or dashboard/.",
             parameters: { type: "object", properties: {} },
             handler: async () => {
-                await session.log("🚀 Deploying full stack to Databricks...");
+                await session.log("🚀 Deploying full stack to DATABRICKS...");
                 const results = [];
                 // Proxy first
                 try {
@@ -135,7 +171,7 @@ const session = await joinSession({
         // ── HEALTH / STATUS ──────────────────────────────────────────────────
         {
             name: "health-check",
-            description: "Check health of the entire LLM stack: DGX Ollama, Databricks proxy, dashboard container, nginx, and all API endpoints.",
+            description: "Check health of the entire LLM stack: DGX Ollama, DATABRICKS proxy, dashboard container, nginx, and all API endpoints.",
             parameters: { type: "object", properties: {} },
             handler: async () => {
                 const results = [];
@@ -153,12 +189,12 @@ const session = await joinSession({
                     results.push(`DGX proxy container: ${noProxy || "none"} (should be none)`);
                 } catch (e) { results.push(`DGX ports: ❌ ${e.message}`); }
 
-                // Databricks proxy
+                // DATABRICKS proxy
                 try {
                     const h = await ssh(DATABRICKS, "curl -sf http://localhost:8001/health 2>/dev/null");
                     const parsed = JSON.parse(h);
-                    results.push(`Proxy (Databricks): ✅ ollama=${parsed.ollama} models=${parsed.model_count}`);
-                } catch (e) { results.push(`Proxy (Databricks): ❌ ${e.message}`); }
+                    results.push(`Proxy (DATABRICKS): ✅ ollama=${parsed.ollama} models=${parsed.model_count}`);
+                } catch (e) { results.push(`Proxy (DATABRICKS): ❌ ${e.message}`); }
 
                 // Dashboard
                 try {
@@ -250,7 +286,7 @@ const session = await joinSession({
         // ── SERVICE MANAGEMENT ───────────────────────────────────────────────
         {
             name: "restart-service",
-            description: "Restart a specific service. Services: proxy (gcopilot-proxy on Databricks), dashboard (gcopilot-dashboard on Databricks), nginx (susman-ingress on Databricks), ollama (systemd on DGX).",
+            description: "Restart a specific service. Services: proxy (gcopilot-proxy on DATABRICKS), dashboard (gcopilot-dashboard on DATABRICKS), nginx (susman-ingress on DATABRICKS), ollama (systemd on DGX).",
             parameters: {
                 type: "object",
                 properties: {
@@ -405,7 +441,7 @@ const session = await joinSession({
         // ── NGINX MANAGEMENT ────────────────────────────────────────────────
         {
             name: "update-nginx",
-            description: "Copy the ~/current_nginx.conf to the susman-ingress container, test the config, and reload nginx. Call after editing the nginx config on Databricks.",
+            description: "Copy the ~/current_nginx.conf to the susman-ingress container, test the config, and reload nginx. Call after editing the nginx config on DATABRICKS.",
             parameters: { type: "object", properties: {} },
             handler: async () => {
                 try {

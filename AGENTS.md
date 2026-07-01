@@ -273,6 +273,38 @@ ssh dgxspark "ollama rm old-model-name"
 
 ## Deploying the Dashboard
 
+### Preferred: automated deploy script
+
+```powershell
+# From repo root on Windows — reads credentials from .env, builds the image on
+# Databricks via SSH/SCP, and restarts the container with the correct env vars.
+python scripts/deploy_dashboard.py
+```
+
+This is the same pattern as `scripts/deploy.py` (proxy deploy), but uses `--env-file`
+(uploaded via a temp file over SCP, then shredded remotely) instead of inline `-e`
+flags, specifically to avoid shell-escaping/history-expansion issues with special
+characters like `!` in passwords. Prefer this over the manual steps below — it is
+less error-prone and keeps the deployed container's env vars in sync with `.env`
+(a stale/mismatched password here was the direct cause of a real login-broken
+incident — see `TROUBLESHOOTING.md`).
+
+**Before running this, always validate `dashboard/index.html` has exactly one
+plain `<script>` tag** (see `TROUBLESHOOTING.md` → "Dashboard Shows Zero Data
+After Login"):
+```powershell
+python -c "
+import re
+html = open('dashboard/index.html', encoding='utf-8').read()
+start = html.index('<script>\n')
+end = html.index('</script>', start)
+open('_extracted.js','w',encoding='utf-8').write(html[start+len('<script>'):end])
+"
+node --check _extracted.js; Remove-Item _extracted.js
+```
+
+### Manual deployment (reference / fallback)
+
 ### Remote dashboard behind nginx ingress (databrick)
 
 ```bash
@@ -368,7 +400,7 @@ Browser → nginx /copilot/ → serve.py:3002 → DGX Spark :8001
 
 ### Deploy Checklist (DO NOT SKIP STEPS)
 1. Edit `dashboard/index.html` and/or `dashboard/serve.py` locally
-2. SCP files to Databricks: `scp dashboard/* databricks:~/GithubCopilotExit/dashboard/`
+2. SCP files to Databricks: `scp dashboard/* Databricks:~/GithubCopilotExit/dashboard/`
 3. Build image with **--no-cache**: `docker build --no-cache -f Dockerfile.deploy -t gcopilot-dashboard .`
 4. Stop + remove old container: `docker stop gcopilot-dashboard && docker rm gcopilot-dashboard`
 5. Run new container with EXACT env vars:
@@ -397,7 +429,7 @@ Browser → nginx /copilot/ → serve.py:3002 → DGX Spark :8001
 - **serve.py must normalize paths** — `_norm_path = self.path.split("?")[0]` before routing
 
 ### Extensions
-Use `validate-databricks-dashboard` and `sync-dashboard-databricks` tools from deploy-dgx extension.
+Use `validate-Databricks-dashboard` and `sync-dashboard-Databricks` tools from deploy-dgx extension.
 
 ---
 
@@ -441,26 +473,45 @@ TROUBLESHOOTING.md     Common bugs, fixes, and prevention guidelines
 ## System Tests Extension (`.github/extensions/system-tests`)
 
 8 test tools that cover every layer of the stack. Invoke via Copilot CLI (`/ext <tool-name>`).
+**Fastest way to validate any change**: just run `run-system-tests` — no arguments,
+no manual curl, no memorized endpoints. It currently reports **15/15 checks passing**
+across all 6 subsystems on a healthy stack.
+
+Both `system-tests` and `deploy-dgx` extensions read credentials from the repo-root
+`.env` file automatically if `COPILOT_PROVIDER_API_KEY` / `DASHBOARD_PASSWORD` /
+`ADMIN_PASSWORD` aren't already set in the process environment — so these tools work
+correctly whether the CLI was launched via `copilot-dgx.bat`, a plain `copilot`
+session, an automated agent, or CI. See `TROUBLESHOOTING.md` for the history of why
+this fallback exists and other hard-won fixes to these extensions (SSH quoting bugs,
+bare-array API response assumptions, a `float('inf')` JSON-serialization bug, etc.) —
+**read it before modifying either extension file.**
 
 | Tool | What it tests | Key checks |
 |---|---|---|
 | `test-completions-api` | OpenAI `/v1/chat/completions` endpoint | Model list, non-streaming completion, SSE streaming, Content-Type header |
 | `test-auth` | All auth layers | API key (missing/wrong/valid), dashboard session (no session → 302, valid session → 200), admin HTTP Basic |
 | `test-dashboard` | Dashboard UI + data endpoints | Container running, login flow, `/stats`, `/v1/models`, `/api/usage/daily`, `/api/history`, nginx proxy |
-| `test-database` | MongoDB connectivity + pipeline | Port 27017 reachable, proxy reports `mongo=true`, daily aggregation, history persistence after inference |
+| `test-database` | MongoDB connectivity + pipeline | Port 27017 reachable, `mongodb_enabled` via `/api/admin/status`, daily aggregation, history persistence after inference |
 | `test-proxy-to-dgx` | Proxy → Ollama connection | Ollama alive, proxy health, router refresh, end-to-end inference, model loaded in VRAM |
 | `test-proxy-to-db` | Proxy → MongoDB write pipeline | Container network reachability, history grows after inference, daily aggregation updates |
 | `test-all-models` | Every installed model | Sequential inference test per model; `skip_large` param to skip 84GB models |
-| `run-system-tests` | Full suite (all above except all-models) | Runs all tests, returns comprehensive pass/fail report. `quick=true` for fast run. |
+| `run-system-tests` | Full suite (all above except all-models) | Runs all tests, returns comprehensive pass/fail report. `quick=true` for fast run (skips the DB write-pipeline section). |
 
 **Usage example:**
 ```
-# In Copilot CLI session (after launching via copilot-dgx.bat):
-/ext run-system-tests
-/ext test-all-models skip_large=true
-/ext test-auth
-/ext test-completions-api model=qwen3-coder stream=true
+# In Copilot CLI session (after launching via copilot-dgx.bat, or any other way — see above):
+run-system-tests
+test-all-models skip_large=true
+test-auth
+test-completions-api model=qwen3-coder stream=true
 ```
+
+**After editing either extension file**, always:
+```
+node --check .github/extensions/system-tests/extension.mjs
+node --check .github/extensions/deploy-dgx/extension.mjs
+```
+then call `extensions_reload` and re-run `run-system-tests` to confirm nothing broke.
 
 **From another agent or workflow:**
 ```javascript
@@ -468,6 +519,7 @@ TROUBLESHOOTING.md     Common bugs, fixes, and prevention guidelines
 // Use write_agent to send to the system-tests extension agent, or
 // call the tools directly via the Copilot SDK extension session.
 ```
+
 
 ---
 

@@ -613,6 +613,43 @@ const PROXY_URL = window.__PROXY_URL || "";
  *  Injected by serve.py before </head>.  Typical value: "/copilot".
  */
 const BASE_PATH = window.__BASE_PATH || "";
+const BUILD_VERSION = window.__BUILD_VERSION || "unknown";
+
+// Format: v1.0.0-20260630-191512 → v1.0.0 • Jun 30, 2026 at 7:15 PM
+function formatBuildVersion(bv) {
+    if (!bv || bv === 'unknown') return { version: 'unknown', date: '' };
+    const parts = bv.split('-');
+    if (parts.length < 2) return { version: bv, date: '' };
+    
+    // Extract version and datetime parts
+    let versionStr = parts[0];
+    if (!versionStr.startsWith('v')) versionStr = 'v' + versionStr;
+    
+    const datePart = parts.slice(1, 4).join('-'); // e.g. "20260630"
+    const timePart = parts.length > 4 ? parts[4] : ''; // e.g., "191512"
+    
+    if (datePart.length >= 8) {
+        try {
+            const year = datePart.slice(0, 4);
+            const monthIdx = parseInt(datePart.slice(4, 6)) - 1;
+            const day = datePart.slice(6, 8);
+            const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+            const dateStr = `${months[monthIdx]} ${parseInt(day)}, ${year}`;
+            
+            if (timePart.length >= 4) {
+                let hour = parseInt(timePart.slice(0, 2));
+                const min = timePart.slice(2, 4);
+                const ampm = hour >= 12 ? 'PM' : 'AM';
+                hour = hour % 12 || 12;
+                return { version: versionStr, date: `${dateStr} at ${hour}:${min} ${ampm}` };
+            }
+            return { version: versionStr, date: dateStr };
+        } catch (e) {
+            // Fallback
+        }
+    }
+    return { version: versionStr, date: '' };
+}
 
 /**
  * pFetch — like fetch(), but prepends PROXY_URL so the dashboard can
@@ -1414,14 +1451,27 @@ function restorePanelOrder() {
 }
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────
-restorePanelOrder();
-initTpsChart();
-checkDb();
-refreshLive();
-updateVramModels();
-setInterval(refreshLive, 2000);
-setInterval(checkDb, 30000);
-setInterval(updateVramModels, 10000);
+// Each call is independently guarded — a failure in one (e.g. Chart.js CDN
+// unreachable) must not prevent the others (especially refreshLive(), which
+// populates all live data) from running.
+function safeBoot(fn, label) {
+  try {
+    const r = fn();
+    if (r && typeof r.catch === 'function') {
+      r.catch(e => console.error(`[bootstrap] ${label} failed:`, e));
+    }
+  } catch (e) {
+    console.error(`[bootstrap] ${label} failed:`, e);
+  }
+}
+safeBoot(restorePanelOrder, 'restorePanelOrder');
+safeBoot(initTpsChart, 'initTpsChart');
+safeBoot(checkDb, 'checkDb');
+safeBoot(refreshLive, 'refreshLive');
+safeBoot(updateVramModels, 'updateVramModels');
+setInterval(()=>safeBoot(refreshLive, 'refreshLive'), 2000);
+setInterval(()=>safeBoot(checkDb, 'checkDb'), 30000);
+setInterval(()=>safeBoot(updateVramModels, 'updateVramModels'), 10000);
 
 if (typeof Sortable !== 'undefined') {
   new Sortable($('live-grid'), {
@@ -1546,7 +1596,19 @@ async function adminRevokeKey(keyId) {
 function escHtml(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
-</script>
-</body>
-</html>
+
+// Version display - format: v1.0.0 • Jun 30, 2026 at 7:15 PM
+(function renderBuildVersion() {
+  const versionEl = document.getElementById('dashboard-version');
+  const buildEl = document.getElementById('build-time');
+  const formatted = formatBuildVersion(BUILD_VERSION);
+  if (versionEl) versionEl.textContent = formatted.version;
+  if (buildEl && formatted.date) buildEl.textContent = formatted.date;
+})();
+    </script>
+    <div class="version-info" style="position:fixed;top:8px;right:20px;font-size:.58rem;color:#686868;background:#1a1a1a;padding:4px 12px;border-radius:12px;">
+      Dashboard v<span id="dashboard-version"></span> • <span id="build-time"></span>
+    </div>
+    </body>
+    </html>
 

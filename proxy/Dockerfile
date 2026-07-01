@@ -5,6 +5,12 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Set version metadata from build args
+ARG BUILD_VERSION="unknown"
+ARG BUILD_TIMESTAMP=""
+ENV PROXY_VERSION=${BUILD_VERSION}
+ENV BUILD_TIMESTAMP=${BUILD_TIMESTAMP}
+
 # Proxy source files
 COPY *.py ./
 

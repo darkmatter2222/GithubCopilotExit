@@ -3,9 +3,9 @@
 // MongoDB, proxy→DGX Ollama chain, and proxy→DB pipeline.
 //
 // Architecture under test:
-//   Browser/Client → nginx (Databricks :443/:80) → gcopilot-proxy (:8001)
+//   Browser/Client → nginx (DATABRICKS :443/:80) → gcopilot-proxy (:8001)
 //                  → Ollama on DGX Spark (:11434)
-//                  → MongoDB on Databricks (:27017)
+//                  → MongoDB on DATABRICKS (:27017)
 //
 // All tools return a string report with ✅/❌/⚠️ per check.
 // Designed for interactive use via Copilot CLI and for automated use via
@@ -14,15 +14,45 @@
 import { joinSession } from "@github/copilot-sdk/extension";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
 
 const exec = promisify(execFile);
 const isWin = globalThis.process?.platform === "win32";
 const shell = isWin ? "pwsh" : "bash";
 const shellFlag = isWin ? "-Command" : "-c";
 
+// ── .env fallback loader ─────────────────────────────────────────────────────
+// Credentials are normally injected into process.env by copilot-dgx.bat before
+// launching the CLI. When the CLI is launched any other way (plain `copilot`,
+// CI, another agent's shell), those vars are unset and every auth-dependent
+// check below would silently look like a fresh regression. To make these
+// tools reliable no matter how the session was started, fall back to reading
+// the repo-root .env file directly (never overrides real env vars already set).
+function loadDotEnvFallback() {
+    try {
+        const here = path.dirname(fileURLToPath(import.meta.url));
+        const envPath = path.resolve(here, "..", "..", "..", ".env"); // repo root
+        const text = readFileSync(envPath, "utf8");
+        for (const line of text.split(/\r?\n/)) {
+            const m = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/.exec(line);
+            if (!m) continue;
+            const [, key, rawVal] = m;
+            if (process.env[key] !== undefined && process.env[key] !== "") continue;
+            let val = rawVal.trim();
+            if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+                val = val.slice(1, -1);
+            }
+            process.env[key] = val;
+        }
+    } catch { /* .env not found — rely on process.env only, defaults will apply */ }
+}
+loadDotEnvFallback();
+
 // ── Env / config ─────────────────────────────────────────────────────────────
 
-const API_KEY      = process.env.COPILOT_PROVIDER_API_KEY || "";
+const API_KEY      = process.env.COPILOT_PROVIDER_API_KEY || process.env.PROXY_API_KEY || "";
 const DASH_USER    = process.env.DASHBOARD_USERNAME || "darkmatter2222";
 const DASH_PASS    = process.env.DASHBOARD_PASSWORD || "";
 const ADMIN_USER   = process.env.ADMIN_USERNAME || "darkmatter2222";
@@ -53,8 +83,15 @@ function run(cmd) {
     return exec(shell, ["-NoProfile", "-NonInteractive", shellFlag, cmd]);
 }
 
+// IMPORTANT: invoke `ssh` directly via execFile with an argv array (no shell
+// in between) so `cmd` is forwarded to the remote host byte-for-byte. Building
+// this as a quoted string and re-parsing it through pwsh/bash (the old
+// approach) is fragile — pwsh does NOT treat `\"` as an escaped quote inside
+// a double-quoted string (only backtick-quote is), so any cmd containing a
+// literal `"` (e.g. `-H "Authorization: Bearer ..."`) silently truncated the
+// remote command and broke every SSH-based check on Windows.
 async function ssh(host, cmd) {
-    const { stdout } = await run(`ssh -o ConnectTimeout=10 ${host} "${cmd.replace(/"/g, '\\"')}"`);
+    const { stdout } = await exec("ssh", ["-o", "ConnectTimeout=10", host, cmd]);
     return stdout.trim();
 }
 
@@ -78,10 +115,37 @@ async function httpGet(url, extraArgs = "") {
     } catch (e) { return `ERR:${e.message}`; }
 }
 
-/** SSH to Databricks, run curl, return body. */
+/** SSH to DATABRICKS, run curl, return body. */
 async function dbCurl(path, extraArgs = "") {
     const cmd = `curl -s --max-time 20 ${extraArgs} http://localhost:8001${path}`;
     return ssh(DATABRICKS, cmd).catch(e => `ERR:${e.message}`);
+}
+
+/**
+ * Check whether the proxy's MongoDB persistence layer is enabled.
+ * NOTE: `/health` never exposes a `mongo` field — that was a test-script
+ * assumption that didn't match the real API (see proxy/main.py `/health`).
+ * The real signal is `mongodb_enabled` on the admin-only `/api/admin/status`
+ * endpoint (proxy/main.py:811-819), which requires HTTP Basic auth.
+ */
+async function mongoEnabled() {
+    try {
+        const body = await ssh(DATABRICKS,
+            `curl -s --max-time 15 --user ${ADMIN_USER}:${ADMIN_PASS} http://localhost:8001/api/admin/status`
+        );
+        return JSON.parse(body)?.mongodb_enabled === true;
+    } catch { return false; }
+}
+
+/**
+ * True if `body` parses as JSON with a `.data` array — the actual response
+ * shape for `/api/usage/daily`, `/api/usage/hourly`, and `/api/history`
+ * (`{"count": N, "data": [...]}`, see proxy/db.py). These endpoints do NOT
+ * return a bare top-level array; checking `Array.isArray(parsed)` directly
+ * always fails against the real API and was a test-script bug.
+ */
+function hasDataArray(body) {
+    try { return Array.isArray(JSON.parse(body)?.data); } catch { return false; }
 }
 
 /** Run a chat completion test via the proxy. Returns {ok, content, ms}. */
@@ -103,9 +167,15 @@ async function chatCompletion({ base, model, message = "Reply with exactly: PASS
         );
         const ms = Date.now() - t0;
         if (stream) {
-            // SSE: check for at least one data: line with content
-            const hasData = out.includes("data:") && !out.includes('"content":""');
-            return { ok: hasData, content: out.slice(0, 120), ms };
+            // SSE: verify the stream terminated correctly and at least one
+            // chunk carried non-empty content. NOTE: a real, healthy SSE
+            // stream's *final* chunk always has `"content":""` (paired with
+            // `finish_reason`) — asserting the empty-content marker is absent
+            // anywhere in the stream was wrong and made this check fail on
+            // every valid response.
+            const hasDone = out.includes("data: [DONE]") || out.includes('"finish_reason"');
+            const hasContent = /"content":"(?!")/.test(out); // at least one non-empty content field
+            return { ok: hasDone && hasContent, content: out.slice(0, 120), ms };
         }
         const parsed = JSON.parse(out);
         const content = parsed?.choices?.[0]?.message?.content || "";
@@ -275,7 +345,14 @@ const session = await joinSession({
                 lines.push("\nAdmin HTTP Basic auth:");
                 const adminNoAuth  = await httpCode(`${PROXY_DIRECT}/api/admin/keys`);
                 const adminBadAuth = await httpCode(`${PROXY_DIRECT}/api/admin/keys`, `--user wronguser:wrongpass`);
-                const adminGoodAuth = await httpCode(`${PROXY_DIRECT}/api/admin/keys`, `--user ${ADMIN_USER}:${ADMIN_PASS.replace(/!/g, "\\!")}`);
+                // NOTE: no backslash-escaping of special characters (e.g. "!") here —
+                // `httpCode`/`run()` executes locally via pwsh on Windows (or bash -c on
+                // POSIX), neither of which perform interactive-style history expansion
+                // in a non-interactive script/-Command invocation, so escaping "!" was
+                // both unnecessary and actively corrupted the password on Windows
+                // (pwsh has no `\x` escape convention, so "\\!"  became a literal
+                // backslash + "!", which never matched the real credential).
+                const adminGoodAuth = await httpCode(`${PROXY_DIRECT}/api/admin/keys`, `--user ${ADMIN_USER}:${ADMIN_PASS}`);
                 lines.push(chk("Admin /api/admin/keys no auth → 401",   adminNoAuth  === "401", `got ${adminNoAuth}`));
                 lines.push(chk("Admin /api/admin/keys wrong auth → 401", adminBadAuth === "401", `got ${adminBadAuth}`));
                 lines.push(chk("Admin /api/admin/keys valid auth → 200", adminGoodAuth === "200", `got ${adminGoodAuth}`));
@@ -339,13 +416,11 @@ const session = await joinSession({
                 lines.push(chk("/v1/models returns model array", modelsOk));
 
                 const dailyBody = await dbCurl("/api/usage/daily", auth);
-                let dailyOk = false;
-                try { dailyOk = Array.isArray(JSON.parse(dailyBody)); } catch {}
+                const dailyOk = hasDataArray(dailyBody);
                 lines.push(chk("/api/usage/daily returns array", dailyOk, dailyOk ? "ok" : dailyBody.slice(0, 60)));
 
                 const histBody = await dbCurl("/api/history", auth);
-                let histOk = false;
-                try { histOk = Array.isArray(JSON.parse(histBody)); } catch {}
+                const histOk = hasDataArray(histBody);
                 lines.push(chk("/api/history returns array", histOk, histOk ? "ok" : histBody.slice(0, 60)));
 
                 // nginx reverse proxy
@@ -373,7 +448,7 @@ const session = await joinSession({
             name: "test-database",
             description: [
                 "Test MongoDB connectivity and data pipeline through the proxy.",
-                "Checks: MongoDB port reachable from Databricks, proxy reports mongo=enabled in /health,",
+                "Checks: MongoDB port reachable from DATABRICKS, proxy reports mongo=enabled in /health,",
                 "/api/usage/daily returns valid structure, /api/history returns list,",
                 "end-to-end write test (run inference, verify new history entry appears).",
                 "MongoDB is at 192.168.86.48:27017, db=radiacode."
@@ -383,27 +458,26 @@ const session = await joinSession({
                 const lines = [header("Database (MongoDB) Tests")];
                 const auth = `-H "Authorization: Bearer ${API_KEY}"`;
 
-                // MongoDB port reachable from Databricks host
+                // MongoDB port reachable from DATABRICKS host
                 try {
                     const portCheck = await ssh(DATABRICKS, "nc -z 192.168.86.48 27017 && echo open || echo closed");
-                    lines.push(chk("MongoDB port 27017 reachable from Databricks", portCheck.includes("open"), portCheck));
+                    lines.push(chk("MongoDB port 27017 reachable from DATABRICKS", portCheck.includes("open"), portCheck));
                 } catch (e) { lines.push(chk("MongoDB port check", false, e.message)); }
 
                 // Proxy health reports mongo status
                 try {
-                    const healthBody = await ssh(DATABRICKS, `curl -s http://localhost:8001/health`);
-                    const health = JSON.parse(healthBody);
-                    lines.push(chk("Proxy /health.mongo == true", health.mongo === true, `mongo=${health.mongo}`));
+                    const enabled = await mongoEnabled();
+                    lines.push(chk("Proxy reports MongoDB enabled", enabled, `mongodb_enabled=${enabled}`));
                 } catch (e) { lines.push(chk("Proxy health mongo flag", false, e.message)); }
 
                 // /api/usage/daily structure
                 const dailyBody = await dbCurl("/api/usage/daily", auth);
                 try {
                     const daily = JSON.parse(dailyBody);
-                    const isArr = Array.isArray(daily);
-                    lines.push(chk("/api/usage/daily returns array", isArr, isArr ? `${daily.length} entries` : dailyBody.slice(0, 60)));
-                    if (Array.isArray(daily) && daily.length > 0) {
-                        const sample = daily[0];
+                    const isArr = Array.isArray(daily?.data);
+                    lines.push(chk("/api/usage/daily returns array", isArr, isArr ? `${daily.data.length} entries` : dailyBody.slice(0, 60)));
+                    if (isArr && daily.data.length > 0) {
+                        const sample = daily.data[0];
                         const hasDate = "date" in sample || "day" in sample || "_id" in sample;
                         lines.push(chk("Usage entries have date field", hasDate, Object.keys(sample).join(", ")));
                     }
@@ -414,9 +488,9 @@ const session = await joinSession({
                 let histCount = 0;
                 try {
                     const hist = JSON.parse(histBody);
-                    const isArr = Array.isArray(hist);
-                    histCount = isArr ? hist.length : 0;
-                    lines.push(chk("/api/history returns array", isArr, isArr ? `${hist.length} entries` : histBody.slice(0, 60)));
+                    const isArr = Array.isArray(hist?.data);
+                    histCount = isArr ? hist.data.length : 0;
+                    lines.push(chk("/api/history returns array", isArr, isArr ? `${hist.data.length} entries` : histBody.slice(0, 60)));
                 } catch { lines.push(chk("/api/history valid JSON", false, histBody.slice(0, 80))); }
 
                 // End-to-end write test: run inference, check history grows
@@ -429,16 +503,27 @@ const session = await joinSession({
                 const histBody2 = await dbCurl("/api/history", auth);
                 try {
                     const hist2 = JSON.parse(histBody2);
-                    const afterCount = Array.isArray(hist2) ? hist2.length : beforeCount;
-                    lines.push(chk("History count grows after inference", afterCount > beforeCount, `${beforeCount} → ${afterCount}`));
+                    const top = hist2?.data?.[0];
+                    // Compare raw record counts (works when below the default
+                    // /api/history limit=200 cap) OR — more robustly on a busy
+                    // system where the page is already saturated — verify the
+                    // newest record reflects the write we just triggered
+                    // (correct model, timestamp within the last ~20s).
+                    const afterCount = Array.isArray(hist2?.data) ? hist2.data.length : beforeCount;
+                    const topIsRecent = !!top && top.model === "qwen3:4b" &&
+                        (Date.now() - Date.parse(top.timestamp + "Z")) < 20000;
+                    const grew = afterCount > beforeCount || topIsRecent;
+                    lines.push(chk("History count grows after inference", grew,
+                        `${beforeCount} → ${afterCount}${topIsRecent ? " (newest record confirms write)" : ""}`));
                 } catch { lines.push(chk("History post-inference", false, "parse failed")); }
 
                 // MongoDB enriched models endpoint
                 const enrichedBody = await dbCurl("/api/models/enriched", auth);
                 try {
                     const enriched = JSON.parse(enrichedBody);
-                    lines.push(chk("/api/models/enriched returns data", Array.isArray(enriched) && enriched.length > 0,
-                        Array.isArray(enriched) ? `${enriched.length} models` : enrichedBody.slice(0, 60)));
+                    const arr = enriched?.data;
+                    lines.push(chk("/api/models/enriched returns data", Array.isArray(arr) && arr.length > 0,
+                        Array.isArray(arr) ? `${arr.length} models` : enrichedBody.slice(0, 60)));
                 } catch { lines.push(chk("/api/models/enriched", false, enrichedBody.slice(0, 60))); }
 
                 const passed = lines.filter(l => l.includes("✅")).length;
@@ -601,9 +686,8 @@ const session = await joinSession({
 
                 // Proxy reports mongo enabled
                 try {
-                    const healthBody = await ssh(DATABRICKS, "curl -sf http://localhost:8001/health 2>/dev/null");
-                    const health = JSON.parse(healthBody);
-                    lines.push(chk("Proxy health reports mongo=true", health.mongo === true, `mongo=${health.mongo}`));
+                    const enabled = await mongoEnabled();
+                    lines.push(chk("Proxy reports MongoDB enabled", enabled, `mongodb_enabled=${enabled}`));
                 } catch (e) { lines.push(chk("Proxy mongo health flag", false, e.message)); }
 
                 // Stats endpoint aggregates from DB
@@ -618,7 +702,7 @@ const session = await joinSession({
                 let beforeCount = 0;
                 try {
                     const hist = JSON.parse(await dbCurl("/api/history", auth));
-                    beforeCount = Array.isArray(hist) ? hist.length : 0;
+                    beforeCount = Array.isArray(hist?.data) ? hist.data.length : 0;
                 } catch {}
 
                 // Trigger inference → DB write
@@ -630,20 +714,25 @@ const session = await joinSession({
                 // Wait for async Mongo write
                 await new Promise(r => setTimeout(r, 4000));
 
-                // Verify history grew
+                // Verify history grew (or, on a busy/capped page, that the newest
+                // record reflects the write we just triggered)
                 try {
                     const hist2 = JSON.parse(await dbCurl("/api/history", auth));
-                    const afterCount = Array.isArray(hist2) ? hist2.length : beforeCount;
-                    lines.push(chk("History collection grows after inference", afterCount > beforeCount,
-                        `${beforeCount} → ${afterCount} entries`));
+                    const top = hist2?.data?.[0];
+                    const afterCount = Array.isArray(hist2?.data) ? hist2.data.length : beforeCount;
+                    const topIsRecent = !!top && top.model === "qwen3:4b" &&
+                        (Date.now() - Date.parse(top.timestamp + "Z")) < 20000;
+                    lines.push(chk("History collection grows after inference", afterCount > beforeCount || topIsRecent,
+                        `${beforeCount} → ${afterCount} entries${topIsRecent ? " (newest record confirms write)" : ""}`));
                 } catch (e) { lines.push(chk("History post-write", false, e.message)); }
 
                 // Daily usage aggregation updates
                 try {
                     const daily = JSON.parse(await dbCurl("/api/usage/daily", auth));
-                    const hasToday = Array.isArray(daily) && daily.length > 0;
+                    const arr = daily?.data;
+                    const hasToday = Array.isArray(arr) && arr.length > 0;
                     lines.push(chk("/api/usage/daily has entries (aggregation running)", hasToday,
-                        hasToday ? `${daily.length} days of data` : "empty"));
+                        hasToday ? `${arr.length} days of data` : "empty"));
                 } catch (e) { lines.push(chk("Daily usage aggregation", false, e.message)); }
 
                 const passed = lines.filter(l => l.includes("✅")).length;
@@ -756,15 +845,13 @@ const session = await joinSession({
                         const r = await ssh(DATABRICKS, "nc -z 192.168.86.48 27017 && echo open || echo closed");
                         mongoPort = r.includes("open");
                     } catch {}
-                    const healthBody = await ssh(DATABRICKS, "curl -sf http://localhost:8001/health 2>/dev/null").catch(() => "{}");
-                    const mongoFlag = JSON.parse(healthBody).mongo === true;
+                    const mongoFlag = await mongoEnabled().catch(() => false);
                     const dailyBody = await dbCurl("/api/usage/daily", auth);
-                    let dailyOk = false;
-                    try { dailyOk = Array.isArray(JSON.parse(dailyBody)); } catch {}
+                    const dailyOk = hasDataArray(dailyBody);
                     sections.push(tally([
                         header("Database"),
                         chk("MongoDB port 27017 reachable", mongoPort),
-                        chk("Proxy mongo=true in health", mongoFlag),
+                        chk("Proxy reports MongoDB enabled", mongoFlag),
                         chk("/api/usage/daily returns array", dailyOk),
                     ].join("\n")));
                 }
@@ -793,15 +880,21 @@ const session = await joinSession({
                     {
                         const auth = `-H "Authorization: Bearer ${API_KEY}"`;
                         let beforeCount = 0;
-                        try { beforeCount = JSON.parse(await dbCurl("/api/history", auth))?.length || 0; } catch {}
+                        try { beforeCount = JSON.parse(await dbCurl("/api/history", auth))?.data?.length || 0; } catch {}
                         await chatCompletion({ base: PROXY_DIRECT, model: "qwen3:4b", message: "Say: PIPELINE_TEST", maxTokens: 4 });
                         await new Promise(r => setTimeout(r, 4000));
-                        let afterCount = 0;
-                        try { afterCount = JSON.parse(await dbCurl("/api/history", auth))?.length || 0; } catch {}
+                        let afterCount = 0, topIsRecent = false;
+                        try {
+                            const after = JSON.parse(await dbCurl("/api/history", auth));
+                            afterCount = after?.data?.length || 0;
+                            const top = after?.data?.[0];
+                            topIsRecent = !!top && top.model === "qwen3:4b" &&
+                                (Date.now() - Date.parse(top.timestamp + "Z")) < 20000;
+                        } catch {}
                         sections.push(tally([
                             header("DB Write Pipeline"),
-                            chk("History persisted after inference", afterCount > beforeCount,
-                                `${beforeCount} → ${afterCount}`),
+                            chk("History persisted after inference", afterCount > beforeCount || topIsRecent,
+                                `${beforeCount} → ${afterCount}${topIsRecent ? " (newest record confirms write)" : ""}`),
                         ].join("\n")));
                     }
                 }

@@ -29,6 +29,10 @@ if os.path.exists(_env_path):
 elif os.path.exists(".env"):
     load_dotenv(".env")
 
+# Version tracking
+PROXY_VERSION = "2026.06.30.1"
+BUILD_TIMESTAMP = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
+
 from fastapi import FastAPI, Request, Response, Depends, HTTPException
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -745,6 +749,8 @@ async def health():
         "ollama": ollama_ok,
         "model_count": len(models),
         "last_refresh": router.last_refresh_ts,
+        "version": PROXY_VERSION,
+        "build_timestamp": BUILD_TIMESTAMP,
     }
 
 
