@@ -9,7 +9,7 @@ Architecture:
   - Thinking suppression workaround for Ollama tool-calling bug (inject reasoning_effort=none)
   - delta.reasoning → delta.content remap for vLLM reasoning-parser responses
   - Token tracking (in-memory) + MongoDB persistence for history/analytics
-  - /stats JSON analytics (dashboard served separately on Data Brick)
+  - /stats JSON analytics (dashboard served separately on the remote host)
 """
 
 import json
@@ -97,7 +97,7 @@ tracker = TokenTracker()
 session_db = SessionDB()
 set_db(session_db)
 
-# GPU stats service — runs on DGX Spark (port 11435) when proxy is remote (Data Brick).
+# GPU stats service — runs on DGX Spark (port 11435) when proxy is remote (the remote host).
 # Auto-derived from OLLAMA_BASE_URL if not explicitly set: replace :11434 → :11435.
 _ollama_base = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
 GPU_STATS_URL: str = os.environ.get(
@@ -381,7 +381,11 @@ async def get_system_stats() -> dict:
             async with httpx.AsyncClient(timeout=3) as client:
                 r = await client.get(GPU_STATS_URL)
             if r.status_code == 200:
-                gpus_result = r.json().get("gpus", [])
+                payload = r.json()
+                gpus_result = payload.get("gpus", [])
+                if payload.get("loaded_models"):
+                    result["loaded_models"] = payload.get("loaded_models", [])
+                    result["loaded_model_count"] = payload.get("loaded_model_count", len(result["loaded_models"]))
         except Exception as exc:
             log.debug("GPU stats service unavailable (%s): %s", GPU_STATS_URL, exc)
 
@@ -419,27 +423,40 @@ async def get_system_stats() -> dict:
 
     # Source 3: Ollama /api/ps — modern Ollama (v0.3+) uses size_vram (bytes)
     # No processor/mem_used fields; util is binary (loaded=100%, not loaded=0%)
-    if not gpus_result:
-        try:
-            ollama_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
-            async with httpx.AsyncClient(timeout=5) as client:
-                r = await client.get(f"{ollama_url}/api/ps")
-            if r.status_code == 200:
+    loaded_models: list[dict] = []
+    try:
+        ollama_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.get(f"{ollama_url}/api/ps")
+        if r.status_code == 200:
+            loaded_models = [
+                {
+                    "name": m.get("name", ""),
+                    "size_vram": m.get("size_vram", 0),
+                    "size_vram_mb": (m.get("size_vram", 0) or 0) // (1024 * 1024),
+                }
+                for m in r.json().get("models", [])
+                if m.get("name")
+            ]
+            if not gpus_result:
                 mem_total_mb = GPU_MEM_TOTAL_MB or 0
-                for model in r.json().get("models", []):
-                    size_vram = model.get("size_vram", 0)
-                    if size_vram and size_vram > 0:
-                        gpus_result.append({
-                            "name": "GPU (DGX Spark)",
-                            "util_percent": 100,
-                            "mem_used_mb": size_vram // (1024 * 1024),
-                            "mem_total_mb": mem_total_mb,
-                            "temp_c": 0,
-                        })
-        except Exception as exc:
-            log.debug("Ollama /api/ps unavailable: %s", exc)
+                total_vram_mb = sum(m.get("size_vram_mb", 0) for m in loaded_models)
+                if total_vram_mb > 0:
+                    gpus_result.append({
+                        "name": "GPU (DGX Spark)",
+                        "util_percent": 100,
+                        "mem_used_mb": total_vram_mb,
+                        "mem_total_mb": mem_total_mb,
+                        "temp_c": 0,
+                        "model_count": len(loaded_models),
+                        "loaded_models": [m["name"] for m in loaded_models],
+                    })
+    except Exception as exc:
+        log.debug("Ollama /api/ps unavailable: %s", exc)
 
     result["gpus"] = gpus_result
+    result["loaded_models"] = [m["name"] for m in loaded_models]
+    result["loaded_model_count"] = len(loaded_models)
 
     # Ollama model listing (separate from running models for disk display)
     try:
@@ -483,12 +500,72 @@ async def stream_completions(
         stream_done = False
         saved_id = "fallback"
         had_exception = False
+        pending_bytes = b""
 
         try:
             async with httpx.AsyncClient(timeout=None) as client:
                 async with client.stream("POST", target_url, json=body) as resp:
                     async for chunk in resp.aiter_bytes():
-                        for line in chunk.split(b"\n"):
+                        pending_bytes += chunk
+                        while True:
+                            event_sep = pending_bytes.find(b"\n\n")
+                            if event_sep < 0:
+                                break
+                            event_bytes = pending_bytes[:event_sep]
+                            pending_bytes = pending_bytes[event_sep + 2 :]
+                            event_bytes = event_bytes.replace(b"\r\n", b"\n")
+                            event_bytes = event_bytes.replace(b"\r", b"\n")
+
+                            for line in event_bytes.split(b"\n"):
+                                stripped = line.strip().decode("utf-8", errors="replace")
+                                if not stripped.startswith("data: "):
+                                    continue
+                                data_part = stripped[6:]
+                                if data_part == "[DONE]":
+                                    stream_done = True
+                                    continue
+                                try:
+                                    payload = json.loads(data_part)
+                                    saved_id = payload.get("id", saved_id)
+                                    choices = payload.get("choices", [])
+                                    if choices:
+                                        delta = choices[0].get("delta", {})
+                                        content = delta.get("content") or delta.get("reasoning") or ""
+                                        if not content and isinstance(payload.get("message"), dict):
+                                            content = payload.get("message", {}).get("content") or ""
+                                        if content:
+                                            token_count += 1
+                                            tracker.record_token(request_id)
+                                        if delta.get("tool_calls"):
+                                            tool_call_seen = True
+                                    usage = payload.get("usage")
+                                    if usage:
+                                        tracker.update_from_response(request_id, payload)
+                                except (json.JSONDecodeError, KeyError, TypeError):
+                                    pass
+
+                            event_bytes = remap_reasoning_to_content(event_bytes)
+
+                            # Inject fallback message before [DONE] when model produces no output
+                            if (
+                                token_count == 0
+                                and not tool_call_seen
+                                and b"data: [DONE]" in event_bytes
+                                and not fallback_injected
+                            ):
+                                log.warning("[%s] empty content — injecting fallback", request_id)
+                                synth = (
+                                    f"data: {{\"id\":\"{saved_id}\",\"object\":\"chat.completion.chunk\","
+                                    f"\"choices\":[{{\"index\":0,\"delta\":{{\"content\":\"[Model produced no output — please retry]\"}},\"finish_reason\":null}}]}}\n\n"
+                                )
+                                yield synth.encode()
+                                fallback_injected = True
+
+                            yield event_bytes + b"\n\n"
+
+                    if pending_bytes:
+                        event_bytes = pending_bytes.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+                        for line in event_bytes.split(b"\n"):
                             stripped = line.strip().decode("utf-8", errors="replace")
                             if not stripped.startswith("data: "):
                                 continue
@@ -503,6 +580,8 @@ async def stream_completions(
                                 if choices:
                                     delta = choices[0].get("delta", {})
                                     content = delta.get("content") or delta.get("reasoning") or ""
+                                    if not content and isinstance(payload.get("message"), dict):
+                                        content = payload.get("message", {}).get("content") or ""
                                     if content:
                                         token_count += 1
                                         tracker.record_token(request_id)
@@ -511,27 +590,11 @@ async def stream_completions(
                                 usage = payload.get("usage")
                                 if usage:
                                     tracker.update_from_response(request_id, payload)
-                            except (json.JSONDecodeError, KeyError):
+                            except (json.JSONDecodeError, KeyError, TypeError):
                                 pass
 
-                        chunk = remap_reasoning_to_content(chunk)
-
-                        # Inject fallback message before [DONE] when model produces no output
-                        if (
-                            token_count == 0
-                            and not tool_call_seen
-                            and b"data: [DONE]" in chunk
-                            and not fallback_injected
-                        ):
-                            log.warning("[%s] empty content — injecting fallback", request_id)
-                            synth = (
-                                f"data: {{\"id\":\"{saved_id}\",\"object\":\"chat.completion.chunk\","
-                                f"\"choices\":[{{\"index\":0,\"delta\":{{\"content\":\"[Model produced no output — please retry]\"}},\"finish_reason\":null}}]}}\n\n"
-                            )
-                            yield synth.encode()
-                            fallback_injected = True
-
-                        yield chunk
+                        event_bytes = remap_reasoning_to_content(event_bytes)
+                        yield event_bytes + b"\n\n"
 
         except Exception as exc:
             had_exception = True

@@ -1,6 +1,6 @@
 // Extension: deploy-dgx
-// Deploy proxy to DATABRICKS and manage dashboard.
-// Architecture: DGX Spark (Ollama only) ← proxy ← DATABRICKS nginx ← clients
+// Deploy proxy to the remote host and manage dashboard.
+// Architecture: DGX Spark (Ollama only) ← proxy ← remote nginx ← clients
 
 import { joinSession } from "@github/copilot-sdk/extension";
 import { execFile } from "node:child_process";
@@ -47,7 +47,7 @@ const DASH_PASS = process.env.DASHBOARD_PASSWORD || "";
 const ADMIN_USER = process.env.ADMIN_USERNAME || "darkmatter2222";
 const ADMIN_PASS = process.env.ADMIN_PASSWORD || "";
 const DGX = "dgxspark";
-const DATABRICKS = "darkmatter2222@192.168.86.48";
+const REMOTE_HOST = "darkmatter2222@192.168.86.48";
 
 function run(cmd) {
     return exec(shell, ["-NoProfile", "-NonInteractive", shellFlag, cmd]);
@@ -76,17 +76,17 @@ async function curlCheck(url, extraArgs = "") {
 const session = await joinSession({
     hooks: {
         onSessionStart: async () => {
-            await session.log("LLM Stack tools loaded (DATABRICKS proxy → DGX Ollama)", { level: "info", ephemeral: true });
+            await session.log("LLM Stack tools loaded (remote proxy → DGX Ollama)", { level: "info", ephemeral: true });
         },
     },
     tools: [
         // ── DEPLOY ──────────────────────────────────────────────────────────────
         {
             name: "deploy-proxy",
-            description: "Deploy gcopilot-proxy (FastAPI) to DATABRICKS. Builds Docker image from proxy/ source, stops old container, starts new one on docucraft_docucraft-network. DGX Spark runs Ollama only.",
+            description: "Deploy gcopilot-proxy (FastAPI) to the remote host. Builds Docker image from proxy/ source, stops old container, starts new one on docucraft_docucraft-network. DGX Spark runs Ollama only.",
             parameters: { type: "object", properties: {} },
             handler: async () => {
-                await session.log("🚀 Deploying proxy to DATABRICKS...");
+                await session.log("🚀 Deploying proxy to the remote host...");
                 try {
                     const { stdout, stderr } = await run("python scripts\\deploy.py 2>&1");
                     const ok = stdout.includes("Deploy successful");
@@ -100,7 +100,7 @@ const session = await joinSession({
         },
         {
             name: "deploy-dashboard",
-            description: "Deploy gcopilot-dashboard (serve.py) to DATABRICKS. SCPs dashboard/serve.py and index.html, rebuilds image with --no-cache, restarts container with correct env vars.",
+            description: "Deploy gcopilot-dashboard (serve.py) to the remote host. SCPs dashboard/serve.py and index.html, rebuilds image with --no-cache, restarts container with correct env vars.",
             parameters: {
                 type: "object",
                 properties: {
@@ -108,23 +108,23 @@ const session = await joinSession({
                 }
             },
             handler: async (args) => {
-                await session.log("📦 Deploying dashboard to DATABRICKS...");
+                await session.log("📦 Deploying dashboard to the remote host...");
                 const key = args.api_key || API_KEY;
                 const steps = [];
                 try {
-                    await run(`scp dashboard\\serve.py ${DATABRICKS}:~/GithubCopilotExit/dashboard/serve.py`);
-                    await run(`scp dashboard\\index.html ${DATABRICKS}:~/GithubCopilotExit/dashboard/index.html`);
-                    await run(`scp dashboard\\Dockerfile ${DATABRICKS}:~/GithubCopilotExit/dashboard/Dockerfile`);
+                    await run(`scp dashboard\\serve.py ${REMOTE_HOST}:~/GithubCopilotExit/dashboard/serve.py`);
+                    await run(`scp dashboard\\index.html ${REMOTE_HOST}:~/GithubCopilotExit/dashboard/index.html`);
+                    await run(`scp dashboard\\Dockerfile ${REMOTE_HOST}:~/GithubCopilotExit/dashboard/Dockerfile`);
                     steps.push("✅ Files uploaded");
                 } catch (e) { return `❌ SCP failed: ${e.message}`; }
 
                 try {
-                    await ssh(DATABRICKS, "cd ~/GithubCopilotExit && docker build --no-cache -f dashboard/Dockerfile -t gcopilot-dashboard . 2>&1 | tail -5");
+                    await ssh(REMOTE_HOST, "cd ~/GithubCopilotExit && docker build --no-cache -f dashboard/Dockerfile -t gcopilot-dashboard . 2>&1 | tail -5");
                     steps.push("✅ Image built");
                 } catch (e) { return `❌ Build failed: ${e.message}`; }
 
                 try {
-                    await ssh(DATABRICKS,
+                    await ssh(REMOTE_HOST,
                         `docker stop gcopilot-dashboard 2>/dev/null; docker rm gcopilot-dashboard 2>/dev/null; ` +
                         `docker run -d --name gcopilot-dashboard --restart unless-stopped ` +
                         `--network docucraft_docucraft-network -p 3002:3002 ` +
@@ -139,17 +139,17 @@ const session = await joinSession({
 
                 // Health check
                 await new Promise(r => setTimeout(r, 6000));
-                const health = await ssh(DATABRICKS, "curl -s http://localhost:3002/healthcheck 2>/dev/null").catch(() => "timeout");
+                const health = await ssh(REMOTE_HOST, "curl -s http://localhost:3002/healthcheck 2>/dev/null").catch(() => "timeout");
                 steps.push(`✅ Health: ${health}`);
                 return steps.join("\n");
             },
         },
         {
             name: "deploy-all",
-            description: "Deploy both proxy and dashboard to DATABRICKS in sequence. Use after making code changes to proxy/ or dashboard/.",
+            description: "Deploy both proxy and dashboard to the remote host in sequence. Use after making code changes to proxy/ or dashboard/.",
             parameters: { type: "object", properties: {} },
             handler: async () => {
-                await session.log("🚀 Deploying full stack to DATABRICKS...");
+                await session.log("🚀 Deploying full stack to the remote host...");
                 const results = [];
                 // Proxy first
                 try {
@@ -158,10 +158,10 @@ const session = await joinSession({
                 } catch (e) { results.push(`❌ Proxy: ${e.message}`); }
                 // Then dashboard
                 try {
-                    await run(`scp dashboard\\serve.py ${DATABRICKS}:~/GithubCopilotExit/dashboard/serve.py`);
-                    await run(`scp dashboard\\index.html ${DATABRICKS}:~/GithubCopilotExit/dashboard/index.html`);
-                    await ssh(DATABRICKS, "cd ~/GithubCopilotExit && docker build --no-cache -f dashboard/Dockerfile -t gcopilot-dashboard . 2>&1 | tail -3");
-                    await ssh(DATABRICKS, "docker restart gcopilot-dashboard");
+                    await run(`scp dashboard\\serve.py ${REMOTE_HOST}:~/GithubCopilotExit/dashboard/serve.py`);
+                    await run(`scp dashboard\\index.html ${REMOTE_HOST}:~/GithubCopilotExit/dashboard/index.html`);
+                    await ssh(REMOTE_HOST, "cd ~/GithubCopilotExit && docker build --no-cache -f dashboard/Dockerfile -t gcopilot-dashboard . 2>&1 | tail -3");
+                    await ssh(REMOTE_HOST, "docker restart gcopilot-dashboard");
                     results.push("✅ Dashboard: deployed");
                 } catch (e) { results.push(`❌ Dashboard: ${e.message}`); }
                 return results.join("\n");
@@ -171,7 +171,7 @@ const session = await joinSession({
         // ── HEALTH / STATUS ──────────────────────────────────────────────────
         {
             name: "health-check",
-            description: "Check health of the entire LLM stack: DGX Ollama, DATABRICKS proxy, dashboard container, nginx, and all API endpoints.",
+            description: "Check health of the entire LLM stack: DGX Ollama, remote proxy, dashboard container, nginx, and all API endpoints.",
             parameters: { type: "object", properties: {} },
             handler: async () => {
                 const results = [];
@@ -189,22 +189,22 @@ const session = await joinSession({
                     results.push(`DGX proxy container: ${noProxy || "none"} (should be none)`);
                 } catch (e) { results.push(`DGX ports: ❌ ${e.message}`); }
 
-                // DATABRICKS proxy
+                // remote proxy
                 try {
-                    const h = await ssh(DATABRICKS, "curl -sf http://localhost:8001/health 2>/dev/null");
+                    const h = await ssh(REMOTE_HOST, "curl -sf http://localhost:8001/health 2>/dev/null");
                     const parsed = JSON.parse(h);
-                    results.push(`Proxy (DATABRICKS): ✅ ollama=${parsed.ollama} models=${parsed.model_count}`);
-                } catch (e) { results.push(`Proxy (DATABRICKS): ❌ ${e.message}`); }
+                    results.push(`Proxy (remote host): ✅ ollama=${parsed.ollama} models=${parsed.model_count}`);
+                } catch (e) { results.push(`Proxy (remote host): ❌ ${e.message}`); }
 
                 // Dashboard
                 try {
-                    const s = await ssh(DATABRICKS, "docker inspect gcopilot-dashboard --format '{{.State.Health.Status}}' 2>/dev/null");
+                    const s = await ssh(REMOTE_HOST, "docker inspect gcopilot-dashboard --format '{{.State.Health.Status}}' 2>/dev/null");
                     results.push(`Dashboard container: ${s || "not found"}`);
                 } catch (e) { results.push(`Dashboard: ❌ ${e.message}`); }
 
                 // nginx
                 try {
-                    const s = await ssh(DATABRICKS, "docker inspect susman-ingress --format '{{.State.Running}}' 2>/dev/null");
+                    const s = await ssh(REMOTE_HOST, "docker inspect susman-ingress --format '{{.State.Running}}' 2>/dev/null");
                     results.push(`nginx (susman-ingress): ${s === "true" ? "running ✅" : "stopped ❌"}`);
                 } catch (e) { results.push(`nginx: ❌ ${e.message}`); }
 
@@ -237,7 +237,7 @@ const session = await joinSession({
                 }
 
                 // Login to get session cookie
-                await ssh(DATABRICKS, `curl -s -X POST ${base}/login -d 'username=${DASH_USER}&password=${DASH_PASS}' -H 'Content-Type: application/x-www-form-urlencoded' -c /tmp/val-cookies.txt -o /dev/null`);
+                await ssh(REMOTE_HOST, `curl -s -X POST ${base}/login -d 'username=${DASH_USER}&password=${DASH_PASS}' -H 'Content-Type: application/x-www-form-urlencoded' -c /tmp/val-cookies.txt -o /dev/null`);
 
                 const c = (url, xtra = "") => curlCheck(url, xtra);
                 const ck = `-H "Authorization: Bearer ${k}"`;
@@ -253,7 +253,7 @@ const session = await joinSession({
                 chk("HTTPS inference with key", await c("https://192.168.86.48/copilot/v1/models", ck), 200);
 
                 results.push("Dashboard:");
-                const dashCode = await ssh(DATABRICKS, `curl -s -o /dev/null -w '%{http_code}' -b /tmp/val-cookies.txt ${base}/`).catch(() => "ERR");
+                const dashCode = await ssh(REMOTE_HOST, `curl -s -o /dev/null -w '%{http_code}' -b /tmp/val-cookies.txt ${base}/`).catch(() => "ERR");
                 chk("Dashboard with session → 200", dashCode, 200);
 
                 results.push("Proxy /dashboard removed:");
@@ -267,7 +267,7 @@ const session = await joinSession({
 
                 results.push("Inference:");
                 try {
-                    const resp = await ssh(DATABRICKS,
+                    const resp = await ssh(REMOTE_HOST,
                         `curl -s -H "Authorization: Bearer ${k}" -H "Content-Type: application/json" ` +
                         `-d '{"model":"qwen3","messages":[{"role":"user","content":"Say: PASS"}],"stream":false,"max_tokens":4}' ` +
                         `${base}/v1/chat/completions 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['choices'][0]['message']['content'][:30])"`
@@ -286,7 +286,7 @@ const session = await joinSession({
         // ── SERVICE MANAGEMENT ───────────────────────────────────────────────
         {
             name: "restart-service",
-            description: "Restart a specific service. Services: proxy (gcopilot-proxy on DATABRICKS), dashboard (gcopilot-dashboard on DATABRICKS), nginx (susman-ingress on DATABRICKS), ollama (systemd on DGX).",
+            description: "Restart a specific service. Services: proxy (gcopilot-proxy on the remote host), dashboard (gcopilot-dashboard on the remote host), nginx (susman-ingress on the remote host), ollama (systemd on DGX).",
             parameters: {
                 type: "object",
                 properties: {
@@ -303,17 +303,17 @@ const session = await joinSession({
                 try {
                     switch (args.service) {
                         case "proxy":
-                            await ssh(DATABRICKS, "docker restart gcopilot-proxy");
+                            await ssh(REMOTE_HOST, "docker restart gcopilot-proxy");
                             await new Promise(r => setTimeout(r, 5000));
-                            const h = await ssh(DATABRICKS, "curl -sf http://localhost:8001/health");
+                            const h = await ssh(REMOTE_HOST, "curl -sf http://localhost:8001/health");
                             return `✅ gcopilot-proxy restarted: ${h}`;
                         case "dashboard":
-                            await ssh(DATABRICKS, "docker restart gcopilot-dashboard");
+                            await ssh(REMOTE_HOST, "docker restart gcopilot-dashboard");
                             await new Promise(r => setTimeout(r, 4000));
-                            const dh = await ssh(DATABRICKS, "docker inspect gcopilot-dashboard --format '{{.State.Health.Status}}'");
+                            const dh = await ssh(REMOTE_HOST, "docker inspect gcopilot-dashboard --format '{{.State.Health.Status}}'");
                             return `✅ gcopilot-dashboard restarted: ${dh}`;
                         case "nginx":
-                            await ssh(DATABRICKS, "docker exec susman-ingress nginx -s reload");
+                            await ssh(REMOTE_HOST, "docker exec susman-ingress nginx -s reload");
                             return `✅ nginx reloaded`;
                         case "ollama":
                             await ssh(DGX, "sudo systemctl restart ollama");
@@ -352,13 +352,13 @@ const session = await joinSession({
                     let logs;
                     switch (args.service) {
                         case "proxy":
-                            logs = await ssh(DATABRICKS, `docker logs gcopilot-proxy --tail ${n} 2>&1`);
+                            logs = await ssh(REMOTE_HOST, `docker logs gcopilot-proxy --tail ${n} 2>&1`);
                             break;
                         case "dashboard":
-                            logs = await ssh(DATABRICKS, `docker logs gcopilot-dashboard --tail ${n} 2>&1`);
+                            logs = await ssh(REMOTE_HOST, `docker logs gcopilot-dashboard --tail ${n} 2>&1`);
                             break;
                         case "nginx":
-                            logs = await ssh(DATABRICKS, `docker logs susman-ingress --tail ${n} 2>&1`);
+                            logs = await ssh(REMOTE_HOST, `docker logs susman-ingress --tail ${n} 2>&1`);
                             break;
                         case "ollama":
                             logs = await ssh(DGX, `sudo journalctl -u ollama -n ${n} --no-pager 2>&1`);
@@ -410,7 +410,7 @@ const session = await joinSession({
                     const out = await ssh(DGX, `ollama pull ${args.model} 2>&1`);
                     // Wait and check if proxy discovers it
                     await new Promise(r => setTimeout(r, 35000));
-                    const health = await ssh(DATABRICKS, "curl -sf http://localhost:8001/health").catch(() => "{}");
+                    const health = await ssh(REMOTE_HOST, "curl -sf http://localhost:8001/health").catch(() => "{}");
                     const parsed = JSON.parse(health);
                     return `✅ Pulled ${args.model}:\n${out.split("\n").slice(-3).join("\n")}\n\nProxy now sees ${parsed.model_count || "?"} models.`;
                 } catch (e) {
@@ -441,13 +441,13 @@ const session = await joinSession({
         // ── NGINX MANAGEMENT ────────────────────────────────────────────────
         {
             name: "update-nginx",
-            description: "Copy the ~/current_nginx.conf to the susman-ingress container, test the config, and reload nginx. Call after editing the nginx config on DATABRICKS.",
+            description: "Copy the ~/current_nginx.conf to the susman-ingress container, test the config, and reload nginx. Call after editing the nginx config on the remote host.",
             parameters: { type: "object", properties: {} },
             handler: async () => {
                 try {
-                    const test = await ssh(DATABRICKS, "docker cp ~/current_nginx.conf susman-ingress:/etc/nginx/conf.d/default.conf && docker exec susman-ingress nginx -t 2>&1");
+                    const test = await ssh(REMOTE_HOST, "docker cp ~/current_nginx.conf susman-ingress:/etc/nginx/conf.d/default.conf && docker exec susman-ingress nginx -t 2>&1");
                     if (test.includes("test is successful")) {
-                        await ssh(DATABRICKS, "docker exec susman-ingress nginx -s reload");
+                        await ssh(REMOTE_HOST, "docker exec susman-ingress nginx -s reload");
                         return `✅ nginx config tested and reloaded:\n${test}`;
                     } else {
                         return `❌ nginx config test failed:\n${test}`;

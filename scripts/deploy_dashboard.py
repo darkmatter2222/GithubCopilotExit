@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Deploy the LLM Proxy Dashboard to Data Brick (192.168.86.48).
-
+Deploy the LLM Proxy Dashboard to the remote host (192.168.86.48).
+ 
 This replaces the manual docker-run steps in AGENTS.md with a repeatable,
 .env-driven script — avoiding stale/incorrect credentials from hand-typed
 docker commands (e.g. shell history expansion mangling "!" in passwords).
 
 Architecture:
-  - gcopilot-dashboard runs on Data Brick, on docucraft_docucraft-network
+  - gcopilot-dashboard runs on the remote host, on docucraft_docucraft-network
   - Talks to gcopilot-proxy via Docker DNS name (http://gcopilot-proxy:8001)
   - Exposed to LAN/internet via nginx ingress at /copilot/ (see nginx/current_nginx.conf)
 
@@ -27,8 +27,8 @@ import time
 from pathlib import Path
 
 REPO = Path(__file__).parent.parent
-DATABRICK_HOST = "darkmatter2222@192.168.86.48"
-DATABRICK_SSH_ALIAS = "databricks"  # matches ~/.ssh/config Host alias
+REMOTE_HOST = "darkmatter2222@192.168.86.48"
+REMOTE_SSH_ALIAS = "databricks"  # matches ~/.ssh/config Host alias
 CONTAINER_NAME = "gcopilot-dashboard"
 IMAGE_NAME = "gcopilot-dashboard"
 PORT = 3002
@@ -56,13 +56,13 @@ def run(cmd: str, check=True) -> subprocess.CompletedProcess:
 
 
 def _ssh_host() -> str:
-    r = subprocess.run(f"ssh -o ConnectTimeout=3 -o BatchMode=yes {DATABRICK_SSH_ALIAS} true",
+    r = subprocess.run(f"ssh -o ConnectTimeout=3 -o BatchMode=yes {REMOTE_SSH_ALIAS} true",
                        shell=True, capture_output=True)
-    return DATABRICK_SSH_ALIAS if r.returncode == 0 else DATABRICK_HOST
+    return REMOTE_SSH_ALIAS if r.returncode == 0 else REMOTE_HOST
 
 
 def ssh(cmd: str, host: str = None, check=True) -> subprocess.CompletedProcess:
-    h = host or DATABRICK_HOST
+    h = host or REMOTE_HOST
     return run(f'ssh {h} "{cmd}"', check=check)
 
 
@@ -114,12 +114,12 @@ def _remote_env_file(env: dict) -> str:
 
 def main():
     print("=" * 60)
-    print("  LLM Proxy Dashboard — Deploy to Data Brick (192.168.86.48)")
+    print("  LLM Proxy Dashboard — Deploy to the remote host (192.168.86.48)")
     print("=" * 60)
 
     env = load_env()
     host = _ssh_host()
-    print(f"\nTarget  : {host} (Data Brick)")
+    print(f"\nTarget  : {host} (remote host)")
     print(f"Network : {DOCKER_NETWORK}")
 
     # ── 1. Build archive ──
@@ -128,7 +128,7 @@ def main():
     print(f"  Archive: {archive} ({archive.stat().st_size // 1024} KB)")
 
     # ── 2. Upload archive + env file ──
-    print("\n[2/6] Uploading to Data Brick…")
+    print("\n[2/6] Uploading to the remote host…")
     run(f'ssh {host} "mkdir -p ~/dashboard-deploy"')
     run(f'scp "{archive}" {host}:~/dashboard-deploy/dashboard-deploy.tar.gz')
     ssh("cd ~/dashboard-deploy && tar xzf dashboard-deploy.tar.gz", host=host)
@@ -142,7 +142,7 @@ def main():
     print("  Upload complete")
 
     # ── 3. Build Docker image ──
-    print("\n[3/6] Building Docker image on Data Brick…")
+    print("\n[3/6] Building Docker image on the remote host…")
     ssh(f"cd ~/dashboard-deploy && docker build --no-cache -f Dockerfile.deploy "
         f"-t {IMAGE_NAME} . 2>&1 | tail -10", host=host)
 

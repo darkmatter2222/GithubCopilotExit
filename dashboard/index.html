@@ -664,6 +664,36 @@ const PROXY_URL = window.__PROXY_URL || "";
  */
 const BASE_PATH = window.__BASE_PATH || "";
 const BUILD_VERSION = window.__BUILD_VERSION || "unknown";
+const STALE_MS = 10000;
+const _chartFreshness = { gpu: 0, tps: 0, cpu: 0, disk: 0, net: 0 };
+
+function markChartFresh(key) {
+  _chartFreshness[key] = Date.now();
+}
+function isChartStale(key, ttl = STALE_MS) {
+  return Date.now() - (_chartFreshness[key] || 0) > ttl;
+}
+function applyBadgeState(id, baseText, stale) {
+  const el = $(id);
+  if (!el) return;
+  const text = baseText ?? el.dataset.baseText ?? el.textContent ?? '—';
+  el.dataset.baseText = text;
+  el.textContent = stale ? `⚠ ${text}` : text;
+  el.style.color = stale ? 'var(--red)' : '';
+}
+function refreshStaleBadges() {
+  applyBadgeState('gpu-temp-badge', null, isChartStale('gpu'));
+  applyBadgeState('gpu-mem-badge', null, isChartStale('gpu'));
+  applyBadgeState('tps-peak', null, isChartStale('tps'));
+  applyBadgeState('avg-tps', null, isChartStale('tps'));
+  applyBadgeState('cpu-avg-badge', null, isChartStale('cpu'));
+  applyBadgeState('disk-busy-badge', null, isChartStale('disk'));
+  applyBadgeState('net-total-badge', null, isChartStale('net'));
+}
+function forceLogout(reason = 'Authentication issue') {
+  const target = (BASE_PATH || '') + '/logout?reason=' + encodeURIComponent(reason);
+  window.location.assign(target);
+}
 
 // Format: v1.0.0-20260630-191512 → v1.0.0 • Jun 30, 2026 at 7:15 PM
 function formatBuildVersion(bv) {
@@ -710,7 +740,13 @@ function formatBuildVersion(bv) {
  */
 function pFetch(path, opts) {
   const target = PROXY_URL ? PROXY_URL + path : BASE_PATH + path;
-  return fetch(target, opts);
+  return fetch(target, opts).then(r => {
+    if (r.status === 401 || r.status === 403) {
+      forceLogout('Authentication failed');
+      throw new Error(`Authentication failed (${r.status})`);
+    }
+    return r;
+  });
 }
 
 // ── Utilities ─────────────────────────────────────────────────────────────
@@ -914,6 +950,7 @@ function initGpuCharts(gpus) {
 function updateGpuCharts(gpus, ramPct) {
   if (!gpus?.length) return;
   if (!_gpuInitialized) initGpuCharts(gpus);
+  markChartFresh('gpu');
 
   const labels = buildTimeLabels();
 
@@ -948,20 +985,25 @@ function updateGpuCharts(gpus, ramPct) {
 
   // Badges
   const g0 = gpus[0];
+  const stale = isChartStale('gpu');
   const tb = $('gpu-temp-badge');
   if (tb && g0?.temp_c) {
     const t = g0.temp_c;
-    tb.textContent = fTemp(t)||`${g0.util_percent}%`;
-    tb.style.color = t >= 85 ? 'var(--red)' : t >= 70 ? 'var(--yellow)' : 'var(--nv)';
+    const text = fTemp(t)||`${g0.util_percent}%`;
+    applyBadgeState('gpu-temp-badge', text, stale);
+    tb.style.color = stale ? 'var(--red)' : (t >= 85 ? 'var(--red)' : t >= 70 ? 'var(--yellow)' : 'var(--nv)');
   }
   const mb = $('gpu-mem-badge');
   if (mb) {
+    let text = '—';
     if (_unifiedMem) {
-      mb.textContent = `RAM ${ramPct||0}%`;
-      mb.style.color = 'var(--blue)';
+      text = `RAM ${ramPct||0}%`;
+      mb.style.color = stale ? 'var(--red)' : 'var(--blue)';
     } else if (g0?.mem_total_mb) {
-      mb.textContent = `${(g0.mem_used_mb/1024).toFixed(1)}/${(g0.mem_total_mb/1024).toFixed(0)} GB`;
+      text = `${(g0.mem_used_mb/1024).toFixed(1)}/${(g0.mem_total_mb/1024).toFixed(0)} GB`;
+      mb.style.color = stale ? 'var(--red)' : '';
     }
+    applyBadgeState('gpu-mem-badge', text, stale);
   }
 
   // Util bar under chart
@@ -1011,6 +1053,7 @@ function initTpsChart() {
 }
 
 function updateTpsChart(history, currentTps) {
+  markChartFresh('tps');
   const c = _charts['cTps']; if (!c) return;
   const pts = history.slice(-HIST_MAX);
   // Build time labels for TPS (same pattern)
@@ -1023,10 +1066,20 @@ function updateTpsChart(history, currentTps) {
   c.data.labels = tpsLabels;
   c.data.datasets[0].data = pts.map(h => h.value||0);
   c.update('none');
+  const stale = isChartStale('tps');
+  const peakEl = $('tps-peak');
+  if (peakEl) {
+    const peakText = currentTps > 0 ? `peak ${Math.max(_peakTps, currentTps).toFixed(1)}` : `peak ${_peakTps.toFixed(1)}`;
+    applyBadgeState('tps-peak', peakText, stale);
+  }
+  const avgEl = $('avg-tps');
+  if (avgEl) {
+    const avgText = currentTps > 0 ? `${(_tpsSum/_tpsCount).toFixed(1)}` : `${(_tpsSum/_tpsCount).toFixed(1)}`;
+    applyBadgeState('avg-tps', avgText, stale);
+  }
   if (currentTps > 0) {
-    if (currentTps > _peakTps) { _peakTps = currentTps; $('tps-peak').textContent = `peak ${_peakTps.toFixed(1)}`; }
+    if (currentTps > _peakTps) { _peakTps = currentTps; }
     _tpsSum += currentTps; _tpsCount++;
-    $('avg-tps').textContent = (_tpsSum/_tpsCount).toFixed(1);
   }
 }
 
@@ -1106,6 +1159,7 @@ function initCpuCharts() {
 }
 
 function updateCpuCharts(cpuPer, cpuPercent) {
+  markChartFresh('cpu');
   const labels = (cpuPer||[]).map((_,i)=>`#${i}`);
   // Bar chart
   const bc = _charts['cCpuBar'];
@@ -1130,7 +1184,7 @@ function updateCpuCharts(cpuPer, cpuPercent) {
 
   // Badge
   const badge = $('cpu-avg-badge');
-  if (badge) badge.textContent = `${avg.toFixed(1)}% avg`;
+  if (badge) applyBadgeState('cpu-avg-badge', `${avg.toFixed(1)}% avg`, isChartStale('cpu'));
 }
 
 // ── Disk I/O area chart ──────────────────────────────────────────────────
@@ -1148,6 +1202,7 @@ function initDiskCharts() {
 }
 
 function updateDiskCharts(sys) {
+  markChartFresh('disk');
   const rdBytes = sys.disk_read_bytes_s || 0;
   const wrBytes = sys.disk_write_bytes_s || 0;
   const busy = sys.disk_busy_pct ?? null;
@@ -1168,7 +1223,7 @@ function updateDiskCharts(sys) {
   // Busy bar & badge
   if (busy != null) {
     setBar('bar-disk-busy','val-disk-busy', busy, `${busy}%`);
-    const bb = $('disk-busy-badge'); if(bb) bb.textContent = `${busy}% busy`;
+    const bb = $('disk-busy-badge'); if(bb) applyBadgeState('disk-busy-badge', `${busy}% busy`, isChartStale('disk'));
   }
   // Peaks
   if (rdMbs > _peakDiskRd) { _peakDiskRd = rdMbs; $('peak-disk-rd').textContent = _peakDiskRd.toFixed(1); }
@@ -1190,6 +1245,7 @@ function initNetCharts() {
 }
 
 function updateNetCharts(sys) {
+  markChartFresh('net');
   const rxBytes = sys.net_rx_bytes_s || 0;
   const txBytes = sys.net_tx_bytes_s || 0;
   const rxMbs = Math.round(rxBytes / 1024 / 1024 * 10) / 10;
@@ -1211,11 +1267,11 @@ function updateNetCharts(sys) {
   if (txMbs > _peakNetTx) { _peakNetTx = txMbs; $('peak-net-tx').textContent = _peakNetTx.toFixed(1); }
   const total = rxMbs + txMbs;
   const nb = $('net-total-badge');
-  if (nb && total > 0) nb.textContent = `${total.toFixed(1)} MB/s`;
+  if (nb) applyBadgeState('net-total-badge', total > 0 ? `${total.toFixed(1)} MB/s` : '—', isChartStale('net'));
 }
 
 // ── System bars ───────────────────────────────────────────────────────────
-function updateSysbar(sys) {
+function updateSysbar(sys, activeModels = []) {
   if (!sys) return;
   setBar('bar-cpu','val-cpu', sys.cpu_percent, sys.cpu_percent != null ? sys.cpu_percent+'%' : '—');
   setBar('bar-ram','val-ram', sys.ram_percent, sys.ram_total_gb ? `${sys.ram_used_gb}/${sys.ram_total_gb}GB` : '—');
@@ -1225,6 +1281,25 @@ function updateSysbar(sys) {
   collectPt(gpus, sys.ram_percent);
   if (gpus.length) updateGpuCharts(gpus, sys.ram_percent);
   if (sys.ollama_models) renderDiskModels(sys.ollama_models);
+
+  const note = $('gpu-mem-note');
+  if (note) {
+    const bits = [];
+    const loaded = (sys.loaded_models || []).filter(Boolean);
+    const active = (activeModels || []).filter(Boolean);
+    if (loaded.length) bits.push(`Loaded: ${loaded.join(', ')}`);
+    if (active.length) bits.push(`Active: ${active.join(', ')}`);
+    if (isChartStale('gpu')) bits.push('⚠ stale');
+    if (bits.length) {
+      note.textContent = bits.join(' • ');
+      note.style.display = '';
+    } else if (_unifiedMem) {
+      note.textContent = 'Unified memory — system RAM shared between CPU and GPU workloads';
+      note.style.display = '';
+    } else {
+      note.style.display = 'none';
+    }
+  }
 
   // ── New system resource charts ────────────────────────────────────────────
   if (sys.cpu_per_core?.length) {
@@ -1281,8 +1356,9 @@ async function refreshLive() {
     $('kpi-act').textContent   = nf(d.active_requests);
     $('active-count-badge').textContent = d.active_requests||0;
 
-    if (d.sys) updateSysbar(d.sys);
+    if (d.sys) updateSysbar(d.sys, d.active_models);
     if (d.tps_history?.length) updateTpsChart(d.tps_history, d.combined_tps||0);
+    refreshStaleBadges();
 
     const recTtft = (d.history||[]).filter(r => (r.ttft_ms ?? r.ttft ?? 0) > 0).slice(0,10);
     if (recTtft.length) {

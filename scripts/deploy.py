@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Deploy LLM Proxy to Data Brick (192.168.86.48).
-
+Deploy LLM Proxy to the remote host (192.168.86.48).
+ 
 Architecture (new):
-  - gcopilot-proxy runs on Data Brick, on docucraft_docucraft-network
+  - gcopilot-proxy runs on the remote host, on docucraft_docucraft-network
   - nginx upstream 'gcopilot-proxy' resolves via Docker DNS (container name)
   - DGX Spark runs Ollama only (port 11434) — no proxy, no dashboard
-  - gcopilot-dashboard also on Data Brick, uses http://gcopilot-proxy:8001 as backend
+  - gcopilot-dashboard also on the remote host, uses http://gcopilot-proxy:8001 as backend
 
 Usage:
     python scripts/deploy.py
@@ -25,8 +25,8 @@ import time
 from pathlib import Path
 
 REPO = Path(__file__).parent.parent
-DATABRICKS_HOST = "darkmatter2222@192.168.86.48"
-DATABRICKS_SSH_ALIAS = "databricks"  # matches ~/.ssh/config Host alias
+REMOTE_HOST = "darkmatter2222@192.168.86.48"
+REMOTE_SSH_ALIAS = "databricks"  # matches ~/.ssh/config Host alias
 CONTAINER_NAME = "gcopilot-proxy"
 IMAGE_NAME = "gcopilot-proxy"
 PORT = 8001
@@ -65,13 +65,13 @@ def run(cmd: str, check=True) -> subprocess.CompletedProcess:
 
 def _ssh_host() -> str:
     """Return the SSH host to use — alias if reachable, otherwise full host."""
-    r = subprocess.run(f"ssh -o ConnectTimeout=3 -o BatchMode=yes {DATABRICKS_SSH_ALIAS} true",
+    r = subprocess.run(f"ssh -o ConnectTimeout=3 -o BatchMode=yes {REMOTE_SSH_ALIAS} true",
                        shell=True, capture_output=True)
-    return DATABRICKS_SSH_ALIAS if r.returncode == 0 else DATABRICKS_HOST
+    return REMOTE_SSH_ALIAS if r.returncode == 0 else REMOTE_HOST
 
 
 def ssh(cmd: str, host: str = None, check=True) -> subprocess.CompletedProcess:
-    h = host or DATABRICKS_HOST
+    h = host or REMOTE_HOST
     return run(f'ssh {h} "{cmd}"', check=check)
 
 
@@ -107,12 +107,12 @@ def build_archive() -> Path:
 
 def main():
     print("=" * 60)
-    print("  LLM Proxy — Deploy to Data Brick (192.168.86.48)")
+    print("  LLM Proxy — Deploy to the remote host (192.168.86.48)")
     print("=" * 60)
 
     env = load_env()
-    # Proxy on Data Brick talks to DGX Ollama over LAN
-    ollama_url = env.get("DATABRICKS_OLLAMA_URL", "http://192.168.86.39:11434")
+    # Proxy on the remote host talks to DGX Ollama over LAN
+    ollama_url = env.get("REMOTE_OLLAMA_URL", "http://192.168.86.39:11434")
     mongo_uri  = env.get("MONGO_URI", "")
     mongo_db   = env.get("MONGO_DB", "radiacode")
     vllm_url   = env.get("VLLM_BASE_URL", "")
@@ -128,7 +128,7 @@ def main():
     gpu_mem_total = env.get("GPU_MEM_TOTAL_MB", "124928")
 
     host = _ssh_host()
-    print(f"\nTarget  : {host} (Data Brick)")
+    print(f"\nTarget  : {host} (remote host)")
     print(f"Ollama  : {ollama_url}  (DGX Spark)")
     print(f"vLLM    : {vllm_url or '(none)'}")
     print(f"MongoDB : {'enabled' if mongo_uri else 'disabled (memory-only)'}")
@@ -139,15 +139,15 @@ def main():
     archive = build_archive()
     print(f"  Archive: {archive} ({archive.stat().st_size // 1024} KB)")
 
-    # ── 2. Upload to Data Brick ──
-    print("\n[2/5] Uploading to Data Brick…")
+    # ── 2. Upload to the remote host ──
+    print("\n[2/5] Uploading to the remote host…")
     run(f'ssh {host} "mkdir -p ~/proxy-deploy"')
     run(f'scp "{archive}" {host}:~/proxy-deploy/proxy-deploy.tar.gz')
     ssh("cd ~/proxy-deploy && tar xzf proxy-deploy.tar.gz", host=host)
     print("  Upload complete")
 
-    # ── 3. Build Docker image on Data Brick ──
-    print("\n[3/5] Building Docker image on Data Brick…")
+    # ── 3. Build Docker image on the remote host ──
+    print("\n[3/5] Building Docker image on the remote host…")
     ssh(f"cd ~/proxy-deploy && docker build --pull=false -t {IMAGE_NAME} . 2>&1 | tail -5",
         host=host)
 

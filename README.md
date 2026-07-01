@@ -123,6 +123,12 @@ This repository is built with:
 | Live dashboard | ✅ | Command center at `localhost:8001` with TPS charts |
 | Zero cost | ✅ | $0/month after GPU investment, forever |
 
+### Recent operational improvements
+- The dashboard now forces a logout and returns to sign-in when auth checks fail with `401/403`.
+- Live GPU/TPS charts now surface a visible `⚠ stale` warning when telemetry stops arriving.
+- The memory panel shows loaded and active model names so concurrent multi-model requests are visible instead of looking like a blank chart.
+- Benchmark on the live proxy: `qwen3-coder:latest` averaged about `41.75s` / `5.25 tok/s`, while `qwen3-coder-spec:latest` averaged about `3.32s` / `58.14 tok/s`.
+
 ---
 
 ## 🏗 How It Works

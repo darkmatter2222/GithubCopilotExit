@@ -1,0 +1,24 @@
+[Unit]
+Description=vLLM Qwen3.6-27B-NVFP4 (with MTP speculative decoding)
+After=network-online.target
+
+[Service]
+Type=simple
+User=darkmatter2222
+Environment=PATH=/home/darkmatter2222/venvs/vllm/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+Restart=on-failure
+RestartSec=10
+ExecStart=/home/darkmatter2222/venvs/vllm/bin/vllm serve /home/darkmatter2222/models/Qwen3.6-27B-NVFP4 \
+    --host 0.0.0.0 \
+    --port 8006 \
+    --served-model-name qwen3.6-nvfp4-spec \
+    --trust-remote-code \
+    --quantization modelopt \
+    --dtype auto \
+    --gpu-memory-utilization 0.55 \
+    --max-model-len 131072 \
+    --max-num-seqs 4 \
+    --speculative-config '{"method":"mtp","num_speculative_tokens":3}'
+
+[Install]
+WantedBy=multi-user.target

@@ -48,7 +48,7 @@ for prefix in API_PREFIXES:
 
 ### Environment Variable Reference
 
-| Env Var | Value on Data Brick | Purpose |
+| Env Var | Value on the remote host | Purpose |
 |---|---|---|
 | `PROXY_BACKEND` | `http://192.168.86.39:8001` | Upstream DGX Spark proxy for server-side forwarding |
 | `PROXY_PATH_PREFIX` | `/copilot` | Injected into HTML so browser JS prefixes fetch URLs |
@@ -57,7 +57,7 @@ for prefix in API_PREFIXES:
 
 ### How to Verify the Fix Works
 
-After deploying, run these tests from inside the Data Brick machine:
+After deploying, run these tests from inside the remote host machine:
 
 ```bash
 # 1. Container is running
@@ -84,9 +84,9 @@ curl -sk https://127.0.0.1/copilot/api/stats/summary?days=1 \
 
 ### Why This Took So Long to Fix
 
-1. **Testing confusion:** When testing from the Data Brick host itself, `curl http://localhost:3002/stats` worked because port 3002 directly serves data. The bug only manifested through nginx `/copilot/` path where fetch calls needed the prefix.
+1. **Testing confusion:** When testing from the remote host itself, `curl http://localhost:3002/stats` worked because port 3002 directly serves data. The bug only manifested through nginx `/copilot/` path where fetch calls needed the prefix.
 
-2. **Docker image caching:** After fixing local files, the Docker container on Data Brick used cached layers. Rebuilding with `docker build -f dashboard/Dockerfile.deploy -t gcopilot-dashboard .` was required AND the old container had to be stopped/removed before running the new image.
+2. **Docker image caching:** After fixing local files, the Docker container on the remote host used cached layers. Rebuilding with `docker build -f dashboard/Dockerfile.deploy -t gcopilot-dashboard .` was required AND the old container had to be stopped/removed before running the new image.
 
 3. **Two-layer dependency:** Both fixes (JS __bp prefix AND serve.py _norm_path) were needed simultaneously. Fixing one without the other gave partial results that looked like nothing changed.
 
@@ -94,17 +94,17 @@ curl -sk https://127.0.0.1/copilot/api/stats/summary?days=1 \
 
 - **Rule 1:** When modifying dashboard JS fetch endpoints, ALWAYS use `__bp + '/path'` pattern — never hardcode absolute paths
 - **Rule 2:** When modifying serve.py routing, ALWAYS normalize path first: `_norm_path = self.path.split("?")[0]`
-- **Rule 3:** After deploying to Data Brick, ALWAYS rebuild the Docker image and restart the container — SCP alone does NOT update a running container
+- **Rule 3:** After deploying to the remote host, ALWAYS rebuild the Docker image and restart the container — SCP alone does NOT update a running container
 - **Rule 4:** Test via nginx Host header (`curl -H "Host: susmannet.duckdns.org"`) not just direct port
 
 ---
 
-## Deployment Workflow for Data Brick Dashboard
+## Deployment Workflow for the Remote Host Dashboard
 
 ### Correct Steps (in order)
 
 1. Edit local files: `dashboard/index.html`, `dashboard/serve.py`
-2. SCP to Data Brick host
+2. SCP to the remote host
 3. Rebuild Docker image: `docker build -f dashboard/Dockerfile.deploy -t gcopilot-dashboard .`
 4. Stop & remove old container: `docker stop gcopilot-dashboard && docker rm gcopilot-dashboard`
 5. Run new container with correct config:
@@ -142,6 +142,17 @@ Fix:
 2. Deploy the proxy changes with `python scripts/deploy.py` so the tracker is restarted.
 3. Verify the live payload at `/stats` and confirm the idle values are `active_requests: 0` and `combined_tps: 0`.
 4. Reload the browser or clear the page cache if the old chart state is still visible.
+
+## Auth Failures and Stale Charts in the Live Dashboard
+
+Symptom: the dashboard remains on a page that looks broken after an auth failure, or the GPU/TPS panels continue to show stale values with no obvious recovery.
+
+Cause: the browser was previously left to render a stale UI after `401/403` responses, and the chart badges had no explicit stale-state feedback when the stats endpoint stopped updating.
+
+Fix:
+- The dashboard now redirects to `/logout` (and then back to sign-in) whenever a protected request returns `401/403`.
+- GPU/TPS/CPU/disk/network badges now switch to an explicit `⚠ stale` state if the live telemetry loop stops receiving fresh data for ~10 seconds.
+- The memory panel also shows loaded and active model names so multi-model concurrency is visible even when the charts are temporarily quiet.
 
 ## Dashboard Shows Zero Data After Login (Root Cause: Malformed `<script>` Tag)
 
@@ -182,7 +193,7 @@ node --check _extracted.js   # must print nothing / exit 0
 
 **Symptom:** `.github/extensions/*/extension.mjs` tools (`run-system-tests`, `test-auth`, `deploy-proxy`, etc.) fail to load, or load but every SSH-based check fails/returns garbage, even though the underlying services are healthy.
 
-**Root Cause #1 — invalid JS identifiers.** A prior uncommitted session's find-replace corrupted the literal string `Data Brick`/`databricks` into `"databrick (local home server hostname is databrick)"` across ~10 files, including as bare JS identifiers inside both extension files (e.g. `const databrick (local home server hostname is databrick) = "..."`). This is invalid JavaScript syntax — the whole extension file fails to load. **Detection:** `node --check .github/extensions/<name>/extension.mjs` must exit 0 for every extension file. Run this after ANY edit to an extension.
+**Root Cause #1 — invalid JS identifiers.** A prior uncommitted session's find-replace corrupted the literal string `remote host`/`databricks` into `"databrick (local home server hostname is databrick)"` across ~10 files, including as bare JS identifiers inside both extension files (e.g. `const databrick (local home server hostname is databrick) = "..."`). This is invalid JavaScript syntax — the whole extension file fails to load. **Detection:** `node --check .github/extensions/<name>/extension.mjs` must exit 0 for every extension file. Run this after ANY edit to an extension.
 
 **Root Cause #2 — broken SSH command quoting on Windows.** Both extensions had a hand-rolled `ssh(host, cmd)` helper that built a single shell-command string (e.g. `` ssh host "curl ... -H \"Authorization: Bearer KEY\" ..." ``) and executed it via `pwsh -Command <string>` (on Windows) or `bash -c <string>` (on POSIX). This is fragile:
 - PowerShell double-quoted strings do **not** treat `\"` as an escaped quote (only `` `" `` backtick-quote works) — a literal `\"` inside a pwsh `-Command` string silently truncates the string early, corrupting/breaking the remote command.
@@ -306,7 +317,7 @@ ssh dgxspark "sudo docker restart gcopilot-proxy"
 Browser at https://susmannet.duckdns.org/copilot/
          |
          v
-nginx on Data Brick (192.168.86.48, port 443)
+nginx on remote host (192.168.86.48, port 443)
   - susmannet.duckdns.org server block at /copilot/
   - proxy_pass http://gcopilot-dash/ (strips /copilot/ prefix)
          |

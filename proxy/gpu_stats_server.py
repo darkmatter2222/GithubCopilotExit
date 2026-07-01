@@ -2,7 +2,7 @@
 """
 GPU Stats Server - lightweight HTTP service that exposes real-time GPU metrics.
 
-Run this on DGX Spark alongside Ollama so the gcopilot-proxy on Data Brick
+Run this on DGX Spark alongside Ollama so the gcopilot-proxy on the remote host
 (which has no local GPU) can read real-time GPU utilization and VRAM stats.
 
 For the GB10 Grace Blackwell (unified memory), nvidia-smi reports [N/A] for
@@ -77,43 +77,49 @@ def query_nvidia_smi() -> list:
         return []
 
 
-def query_ollama_vram() -> int:
-    """Return total VRAM used by all Ollama loaded models (bytes -> MB), or 0."""
+def query_ollama_vram() -> tuple[int, list[str]]:
+    """Return total VRAM used by all Ollama loaded models and their names."""
     try:
         req = urllib.request.Request(f"{OLLAMA_URL}/api/ps", headers={"Accept": "application/json"})
         with urllib.request.urlopen(req, timeout=3) as resp:
             data = json.loads(resp.read())
         total_vram = sum(m.get("size_vram", 0) for m in data.get("models", []))
-        return total_vram // (1024 * 1024)
+        names = [m.get("name", "") for m in data.get("models", []) if m.get("name")]
+        return total_vram // (1024 * 1024), names
     except Exception:
-        return 0
+        return 0, []
 
 
-def get_gpu_stats() -> list:
+def get_gpu_stats() -> dict:
     """Merge nvidia-smi (util/temp) with Ollama size_vram (memory)."""
     gpus = query_nvidia_smi()
+    loaded_models: list[str] = []
     if not gpus:
-        return []
+        return {"gpus": [], "loaded_models": [], "loaded_model_count": 0}
 
     # On GB10 unified memory, nvidia-smi returns [N/A] for memory fields.
     # Fill from Ollama /api/ps instead.
     needs_vram = any(g["mem_total_mb"] == 0 for g in gpus)
     if needs_vram:
-        vram_used_mb = query_ollama_vram()
+        vram_used_mb, loaded_models = query_ollama_vram()
         for g in gpus:
             if g["mem_total_mb"] == 0:
                 g["mem_used_mb"] = vram_used_mb
                 g["mem_total_mb"] = GPU_MEM_TOTAL_MB
 
-    return gpus
+    return {
+        "gpus": gpus,
+        "loaded_models": loaded_models,
+        "loaded_model_count": len(loaded_models),
+    }
 
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = self.path.split("?")[0].rstrip("/")
         if path in ("/gpu-stats", "/health"):
-            gpus = get_gpu_stats()
-            body = json.dumps({"gpus": gpus}).encode()
+            payload = get_gpu_stats()
+            body = json.dumps(payload).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))

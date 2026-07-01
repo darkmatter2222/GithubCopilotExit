@@ -16,8 +16,8 @@
          ┌─────────────┼──────────────┐
          ▼             ▼              ▼
    ┌──────────┐  ┌──────────┐   ┌──────────────┐
-   │ DGX      │  │ Data Brick│   │ External     │
-   │ Spark    │  │ (86.48)  │   │ Browser      │
+   │ DGX      │  │ Remote   │   │ External     │
+   │ Spark    │  │ host     │   │ Browser      │
    │ (86.39)  │  │          │   │              │
    ├──────────┤  ├──────────┤   └───────┬──────┘
    │ gcopilot-│  │ susman-  │           │
@@ -43,7 +43,7 @@ The LLM dashboard can be served remotely behind an nginx reverse proxy (e.g., `s
 
 **Data flow:** Browser → nginx (`/copilot/`) → serve.py (:3002) → gcopilot-proxy container (:8001) → Ollama on DGX Spark (:11434).
 - **PROXY_PATH_PREFIX=/copilot** — injected into HTML as `window.__BASE_PATH` so browser `pFetch()` calls hit the correct nginx location block (`/copilot/stats`, `/copilot/v1/models`, etc.)
-- **PROXY_BACKEND=http://gcopilot-proxy:8001** — serve.py server-side proxy target. Uses Docker container name (both containers on `docucraft_docucraft-network`). Do NOT use the DGX Spark IP here — gcopilot-proxy runs on Data Brick, not DGX Spark.
+- **PROXY_BACKEND=http://gcopilot-proxy:8001** — serve.py server-side proxy target. Uses Docker container name (both containers on `docucraft_docucraft-network`). Do NOT use the DGX Spark IP here — gcopilot-proxy runs on the remote host, not DGX Spark.
 - Nginx upstream needs `resolver 127.0.0.11;` (Docker embedded DNS) to resolve container names on shared networks.
 
 ### Data & MongoDB
@@ -52,6 +52,13 @@ MongoDB (`radiacode@192.168.86.48:27017`) provides persistent analytics:
 - **/api/usage/daily** — Daily token/request totals (works immediately, reads from proxy in-memory + mongo)
 - **/api/history** — Request-level history (populates as requests flow through the proxy)
 - MongoDB connection is configured via `MONGO_URI` env var on gcopilot-proxy container.
+
+## Recent dashboard resilience + telemetry notes
+
+- The dashboard now redirects the user to the sign-in page when auth checks fail with `401/403` instead of silently leaving them on a broken page.
+- Live GPU/TPS/cpu/disk/network badges now switch to a visible `⚠ stale` state when the telemetry stream stops updating.
+- The memory panel surfaces loaded and active model names so multi-model concurrency is visible in the live UI.
+- Live benchmark summary from the deployed proxy: `qwen3-coder:latest` averaged about `41.75s` / `5.25 tok/s`, while `qwen3-coder-spec:latest` averaged about `3.32s` / `58.14 tok/s`.
 
 ---
 
@@ -277,7 +284,7 @@ ssh dgxspark "ollama rm old-model-name"
 
 ```powershell
 # From repo root on Windows — reads credentials from .env, builds the image on
-# Data Brick via SSH/SCP, and restarts the container with the correct env vars.
+# remote host via SSH/SCP, and restarts the container with the correct env vars.
 python scripts/deploy_dashboard.py
 ```
 
@@ -388,9 +395,9 @@ Dashboard: `http://localhost:8001/dashboard`
 
 ---
 
-## Data Brick Dashboard Deployment
+## Remote Host Dashboard Deployment
 
-The dashboard runs on Data Brick (192.168.86.48) behind nginx ingress at `/copilot/` path prefix.
+The dashboard runs on the remote host (192.168.86.48) behind nginx ingress at `/copilot/` path prefix.
 
 ### Architecture
 ```
@@ -400,7 +407,7 @@ Browser → nginx /copilot/ → serve.py:3002 → DGX Spark :8001
 
 ### Deploy Checklist (DO NOT SKIP STEPS)
 1. Edit `dashboard/index.html` and/or `dashboard/serve.py` locally
-2. SCP files to Data Brick: `scp dashboard/* Data Brick:~/GithubCopilotExit/dashboard/`
+2. SCP files to the remote host: `scp dashboard/* darkmatter2222@192.168.86.48:~/GithubCopilotExit/dashboard/`
 3. Build image with **--no-cache**: `docker build --no-cache -f Dockerfile.deploy -t gcopilot-dashboard .`
 4. Stop + remove old container: `docker stop gcopilot-dashboard && docker rm gcopilot-dashboard`
 5. Run new container with EXACT env vars:
@@ -429,7 +436,7 @@ Browser → nginx /copilot/ → serve.py:3002 → DGX Spark :8001
 - **serve.py must normalize paths** — `_norm_path = self.path.split("?")[0]` before routing
 
 ### Extensions
-Use `validate-Data Brick-dashboard` and `sync-dashboard-Data Brick` tools from deploy-dgx extension.
+Use `validate-remote-host-dashboard` and `sync-remote-host-dashboard` tools from deploy-dgx extension.
 
 ---
 
@@ -476,7 +483,7 @@ scripts/
   copilot-setup-steps.yml    Model management workflow reference
   system-health-check.yml    Full health check workflow (manual + scheduled; self-hosted runner for live checks)
 nginx/
-  current_nginx.conf   Canonical nginx config (copy to Data Brick ~/current_nginx.conf, then use update-nginx)
+  current_nginx.conf   Canonical nginx config (copy to the remote host ~/current_nginx.conf, then use update-nginx)
 .env.example           Config template — copy to .env and fill in values
 AGENTS.md              This file
 TROUBLESHOOTING.md     Common bugs, fixes, and prevention guidelines

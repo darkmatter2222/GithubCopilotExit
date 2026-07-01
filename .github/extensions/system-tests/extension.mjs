@@ -3,9 +3,9 @@
 // MongoDB, proxy→DGX Ollama chain, and proxy→DB pipeline.
 //
 // Architecture under test:
-//   Browser/Client → nginx (DATABRICKS :443/:80) → gcopilot-proxy (:8001)
+//   Browser/Client → nginx (remote host :443/:80) → gcopilot-proxy (:8001)
 //                  → Ollama on DGX Spark (:11434)
-//                  → MongoDB on DATABRICKS (:27017)
+//                  → MongoDB on the remote host (:27017)
 //
 // All tools return a string report with ✅/❌/⚠️ per check.
 // Designed for interactive use via Copilot CLI and for automated use via
@@ -59,7 +59,7 @@ const ADMIN_USER   = process.env.ADMIN_USERNAME || "darkmatter2222";
 const ADMIN_PASS   = process.env.ADMIN_PASSWORD || "";
 
 const DGX          = "dgxspark";                            // ssh host alias
-const DATABRICKS   = "darkmatter2222@192.168.86.48";
+const REMOTE_HOST   = "darkmatter2222@192.168.86.48";
 
 const PROXY_DIRECT = "http://192.168.86.48:8001";          // direct container port
 const PUBLIC_BASE  = "http://192.168.86.48/copilot";       // via nginx
@@ -115,10 +115,10 @@ async function httpGet(url, extraArgs = "") {
     } catch (e) { return `ERR:${e.message}`; }
 }
 
-/** SSH to DATABRICKS, run curl, return body. */
+/** SSH to the remote host, run curl, return body. */
 async function dbCurl(path, extraArgs = "") {
     const cmd = `curl -s --max-time 20 ${extraArgs} http://localhost:8001${path}`;
-    return ssh(DATABRICKS, cmd).catch(e => `ERR:${e.message}`);
+    return ssh(REMOTE_HOST, cmd).catch(e => `ERR:${e.message}`);
 }
 
 /**
@@ -130,7 +130,7 @@ async function dbCurl(path, extraArgs = "") {
  */
 async function mongoEnabled() {
     try {
-        const body = await ssh(DATABRICKS,
+        const body = await ssh(REMOTE_HOST,
             `curl -s --max-time 15 --user ${ADMIN_USER}:${ADMIN_PASS} http://localhost:8001/api/admin/status`
         );
         return JSON.parse(body)?.mongodb_enabled === true;
@@ -158,7 +158,7 @@ async function chatCompletion({ base, model, message = "Reply with exactly: PASS
     });
     const t0 = Date.now();
     try {
-        const out = await ssh(DATABRICKS,
+        const out = await ssh(REMOTE_HOST,
             `curl -s --max-time 60 ` +
             `-H 'Authorization: Bearer ${apiKey}' ` +
             `-H 'Content-Type: application/json' ` +
@@ -310,13 +310,13 @@ const session = await joinSession({
 
                 // Login and get cookie
                 try {
-                    await ssh(DATABRICKS,
+                    await ssh(REMOTE_HOST,
                         `curl -s -X POST http://localhost:3002/login ` +
                         `-d 'username=${DASH_USER}&password=${DASH_PASS}' ` +
                         `-H 'Content-Type: application/x-www-form-urlencoded' ` +
                         `-c /tmp/systest-cookies.txt -o /dev/null`
                     );
-                    const dashWithSession = await ssh(DATABRICKS,
+                    const dashWithSession = await ssh(REMOTE_HOST,
                         `curl -s -o /dev/null -w '%{http_code}' -b /tmp/systest-cookies.txt http://localhost:3002/`
                     );
                     lines.push(chk("Dashboard with valid session → 200", dashWithSession === "200", `got ${dashWithSession}`));
@@ -326,14 +326,14 @@ const session = await joinSession({
 
                 // Wrong dashboard credentials → 302 (redirect back to login)
                 try {
-                    const badLogin = await ssh(DATABRICKS,
+                    const badLogin = await ssh(REMOTE_HOST,
                         `curl -s -X POST http://localhost:3002/login ` +
                         `-d 'username=wronguser&password=wrongpass' ` +
                         `-H 'Content-Type: application/x-www-form-urlencoded' ` +
                         `-c /tmp/systest-badcookies.txt -o /dev/null -w '%{http_code}'`
                     );
                     // After bad login, dashboard should still require auth
-                    const stillProtected = await ssh(DATABRICKS,
+                    const stillProtected = await ssh(REMOTE_HOST,
                         `curl -s -o /dev/null -w '%{http_code}' -b /tmp/systest-badcookies.txt http://localhost:3002/`
                     );
                     lines.push(chk("Dashboard with wrong credentials still protected", stillProtected !== "200", `got ${stillProtected}`));
@@ -381,23 +381,23 @@ const session = await joinSession({
 
                 // Container health
                 try {
-                    const state = await ssh(DATABRICKS, "docker inspect gcopilot-dashboard --format '{{.State.Running}}' 2>/dev/null");
+                    const state = await ssh(REMOTE_HOST, "docker inspect gcopilot-dashboard --format '{{.State.Running}}' 2>/dev/null");
                     lines.push(chk("gcopilot-dashboard container running", state === "true", state));
                 } catch (e) { lines.push(chk("Dashboard container", false, e.message)); }
 
                 // serve.py responding
-                const directCode = await ssh(DATABRICKS, "curl -s -o /dev/null -w '%{http_code}' http://localhost:3002/ 2>/dev/null").catch(() => "ERR");
+                const directCode = await ssh(REMOTE_HOST, "curl -s -o /dev/null -w '%{http_code}' http://localhost:3002/ 2>/dev/null").catch(() => "ERR");
                 lines.push(chk("serve.py listening on :3002 → 302 or 200", directCode === "302" || directCode === "200", `got ${directCode}`));
 
                 // Login and verify session
                 try {
-                    await ssh(DATABRICKS,
+                    await ssh(REMOTE_HOST,
                         `curl -s -X POST http://localhost:3002/login ` +
                         `-d 'username=${DASH_USER}&password=${DASH_PASS}' ` +
                         `-H 'Content-Type: application/x-www-form-urlencoded' ` +
                         `-c /tmp/systest-dash-cookies.txt -o /dev/null`
                     );
-                    const dashOk = await ssh(DATABRICKS, "curl -s -o /dev/null -w '%{http_code}' -b /tmp/systest-dash-cookies.txt http://localhost:3002/");
+                    const dashOk = await ssh(REMOTE_HOST, "curl -s -o /dev/null -w '%{http_code}' -b /tmp/systest-dash-cookies.txt http://localhost:3002/");
                     lines.push(chk("Login + authenticated dashboard loads → 200", dashOk === "200", `got ${dashOk}`));
                 } catch (e) { lines.push(chk("Dashboard login flow", false, e.message)); }
 
@@ -448,7 +448,7 @@ const session = await joinSession({
             name: "test-database",
             description: [
                 "Test MongoDB connectivity and data pipeline through the proxy.",
-                "Checks: MongoDB port reachable from DATABRICKS, proxy reports mongo=enabled in /health,",
+                "Checks: MongoDB port reachable from REMOTE_HOST, proxy reports mongo=enabled in /health,",
                 "/api/usage/daily returns valid structure, /api/history returns list,",
                 "end-to-end write test (run inference, verify new history entry appears).",
                 "MongoDB is at 192.168.86.48:27017, db=radiacode."
@@ -458,10 +458,10 @@ const session = await joinSession({
                 const lines = [header("Database (MongoDB) Tests")];
                 const auth = `-H "Authorization: Bearer ${API_KEY}"`;
 
-                // MongoDB port reachable from DATABRICKS host
+                // MongoDB port reachable from REMOTE_HOST host
                 try {
-                    const portCheck = await ssh(DATABRICKS, "nc -z 192.168.86.48 27017 && echo open || echo closed");
-                    lines.push(chk("MongoDB port 27017 reachable from DATABRICKS", portCheck.includes("open"), portCheck));
+                    const portCheck = await ssh(REMOTE_HOST, "nc -z 192.168.86.48 27017 && echo open || echo closed");
+                    lines.push(chk("MongoDB port 27017 reachable from REMOTE_HOST", portCheck.includes("open"), portCheck));
                 } catch (e) { lines.push(chk("MongoDB port check", false, e.message)); }
 
                 // Proxy health reports mongo status
@@ -565,7 +565,7 @@ const session = await joinSession({
 
                 // Proxy health shows ollama connected
                 try {
-                    const healthBody = await ssh(DATABRICKS, "curl -sf http://localhost:8001/health 2>/dev/null");
+                    const healthBody = await ssh(REMOTE_HOST, "curl -sf http://localhost:8001/health 2>/dev/null");
                     const health = JSON.parse(healthBody);
                     lines.push(chk("Proxy /health ollama=true", health.ollama === true, JSON.stringify(health)));
                     lines.push(chk(`Proxy sees models (${health.model_count})`, (health.model_count || 0) > 0));
@@ -573,7 +573,7 @@ const session = await joinSession({
 
                 // Router refresh discovers all models
                 try {
-                    const refreshBody = await ssh(DATABRICKS,
+                    const refreshBody = await ssh(REMOTE_HOST,
                         `curl -sf -X POST ${auth} http://localhost:8001/api/router/refresh 2>/dev/null`
                     );
                     const refresh = JSON.parse(refreshBody);
@@ -678,7 +678,7 @@ const session = await joinSession({
 
                 // MongoDB network path: proxy container → mongo host
                 try {
-                    const netCheck = await ssh(DATABRICKS,
+                    const netCheck = await ssh(REMOTE_HOST,
                         "docker exec gcopilot-proxy python3 -c \"import socket; s=socket.create_connection(('192.168.86.48',27017),3); s.close(); print('ok')\" 2>&1"
                     );
                     lines.push(chk("Proxy container can reach MongoDB:27017", netCheck.trim() === "ok", netCheck.trim()));
@@ -779,7 +779,7 @@ const session = await joinSession({
                 // ── Proxy health (fast prerequisite check) ──
                 const lines = [header("Full System Test Suite")];
                 try {
-                    const h = JSON.parse(await ssh(DATABRICKS, "curl -sf http://localhost:8001/health 2>/dev/null").catch(() => "{}"));
+                    const h = JSON.parse(await ssh(REMOTE_HOST, "curl -sf http://localhost:8001/health 2>/dev/null").catch(() => "{}"));
                     const ok = h.ollama === true;
                     lines.push(chk(`Proxy alive (ollama=${h.ollama}, models=${h.model_count})`, ok));
                     if (!ok) {
@@ -823,7 +823,7 @@ const session = await joinSession({
                 // ── Dashboard ──
                 await session.log("Testing dashboard...");
                 {
-                    const dashCode = await ssh(DATABRICKS, "curl -s -o /dev/null -w '%{http_code}' http://localhost:3002/ 2>/dev/null").catch(() => "ERR");
+                    const dashCode = await ssh(REMOTE_HOST, "curl -s -o /dev/null -w '%{http_code}' http://localhost:3002/ 2>/dev/null").catch(() => "ERR");
                     const nginxHealth = await httpCode(`${PUBLIC_BASE}/health`);
                     const statsBody = await dbCurl("/stats", `-H "Authorization: Bearer ${API_KEY}"`);
                     let statsOk = false;
@@ -842,7 +842,7 @@ const session = await joinSession({
                     const auth = `-H "Authorization: Bearer ${API_KEY}"`;
                     let mongoPort = false;
                     try {
-                        const r = await ssh(DATABRICKS, "nc -z 192.168.86.48 27017 && echo open || echo closed");
+                        const r = await ssh(REMOTE_HOST, "nc -z 192.168.86.48 27017 && echo open || echo closed");
                         mongoPort = r.includes("open");
                     } catch {}
                     const mongoFlag = await mongoEnabled().catch(() => false);
@@ -865,7 +865,7 @@ const session = await joinSession({
                         dgxAlive = !!ver.version;
                     } catch {}
                     const proxyOllama = (JSON.parse(
-                        await ssh(DATABRICKS, "curl -sf http://localhost:8001/health 2>/dev/null").catch(() => "{}")
+                        await ssh(REMOTE_HOST, "curl -sf http://localhost:8001/health 2>/dev/null").catch(() => "{}")
                     ).ollama) === true;
                     sections.push(tally([
                         header("DGX Spark Connection"),

@@ -77,7 +77,7 @@ nav{position:sticky;top:0;z-index:100;background:var(--surface);border-bottom:2p
 .panel-body{padding:9px 10px}
 .cw{position:relative;width:100%}
 .cw100{height:100px}.cw120{height:120px}.cw130{height:130px}
-.cw160{height:160px}.cw180{height:180px}.cw210{height:210px}
+.cw80{height:80px}.cww{height:100px}.cw120{height:120px}.cw130{height:130px}.cw160{height:160px}.cw180{height:180px}.cw210{height:210px}
 
 /* ── RESOURCE BARS ── */
 .rb{display:flex;align-items:center;gap:6px;margin-bottom:4px}
@@ -210,6 +210,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
     <button class="nav-tab" onclick="showPage('usage',this)">Usage</button>
     <button class="nav-tab" onclick="showPage('cost',this)">Cost</button>
     <button class="nav-tab" onclick="showPage('log',this)">Log</button>
+    <button class="nav-tab" onclick="showPage('admin',this)">&#9679; Admin</button>
   </div>
   <div class="nav-right">
     <div class="temp-toggle">
@@ -220,6 +221,9 @@ tr:hover td{background:rgba(255,255,255,.02)}
     <span id="rdot" class="rdot"></span>
     <span id="clock" class="clock-wrap">--:--:--</span>
     <span class="pulse"></span>
+    <a href="/logout" style="font-size:.58rem;color:var(--sub);text-decoration:none;
+       padding:2px 6px;border:1px solid var(--border);border-radius:2px;margin-left:4px;
+       letter-spacing:.04em;font-weight:700;text-transform:uppercase" title="Sign out">⏏</a>
   </div>
 </nav>
 
@@ -347,6 +351,56 @@ tr:hover td{background:rgba(255,255,255,.02)}
         </div>
       </div>
     </div>
+
+   <!-- CPU (20 cores) -->
+   <div class="panel" data-id="cpu">
+     <div class="ph grab">
+       <span><span class="drag-hint">⠿</span>CPU Utilization</span>
+       <span id="cpu-avg-badge" class="ph-badge nv">— avg</span>
+       <span class="panel-grip">☰</span>
+     </div>
+     <div class="panel-body">
+       <div class="cw cw100" id="cpu-barchart-wrap"><canvas id="cCpuBar"></canvas></div>
+       <div class="cw cw80" style="margin-top:6px"><canvas id="cCpuAvg"></canvas></div>
+     </div>
+   </div>
+
+   <!-- Disk I/O -->
+   <div class="panel" data-id="diskio">
+     <div class="ph grab">
+       <span><span class="drag-hint">⠿</span>Disk I/O</span>
+       <span id="disk-busy-badge" class="ph-badge">0% busy</span>
+       <span class="panel-grip">☰</span>
+     </div>
+     <div class="panel-body">
+       <div class="cw cw120"><canvas id="cDisk"></canvas></div>
+       <div style="margin-top:6px;display:flex;gap:4px;align-items:center">
+         <span style="font-size:.53rem;text-transform:uppercase;color:var(--sub);font-weight:700;min-width:38px">Busy</span>
+         <div class="rb-bg" style="flex:1"><div class="rb-fill rc-nv" id="bar-disk-busy" style="width:0%"></div></div>
+         <span id="val-disk-busy" style="font-size:.62rem;font-family:var(--mono);min-width:36px;text-align:right">—</span>
+       </div>
+       <div style="margin-top:4px;display:flex;gap:14px;font-size:.62rem">
+         <span>Rd <span id="peak-disk-rd" style="color:var(--nv);font-family:var(--mono)">—</span> MB/s</span>
+         <span>Wr <span id="peak-disk-wr" style="color:var(--blue);font-family:var(--mono)">—</span> MB/s</span>
+       </div>
+     </div>
+   </div>
+
+   <!-- Network I/O -->
+   <div class="panel" data-id="netio">
+     <div class="ph grab">
+       <span><span class="drag-hint">⠿</span>Network I/O</span>
+       <span id="net-total-badge" class="ph-badge bl">—</span>
+       <span class="panel-grip">☰</span>
+     </div>
+     <div class="panel-body">
+       <div class="cw cw120"><canvas id="cNet"></canvas></div>
+       <div style="margin-top:5px;display:flex;gap:14px;font-size:.62rem">
+         <span>↓ Peak <span id="peak-net-rx" style="color:var(--nv);font-family:var(--mono)">—</span> MB/s</span>
+         <span>↑ Peak <span id="peak-net-tx" style="color:var(--teal);font-family:var(--mono)">—</span> MB/s</span>
+       </div>
+     </div>
+   </div>
 
   </div><!-- /live-grid -->
 </div><!-- /page-live -->
@@ -499,6 +553,86 @@ tr:hover td{background:rgba(255,255,255,.02)}
   <div class="panel"><div class="panel-body" style="padding:0"><div class="log-wrap" id="ev-log"></div></div></div>
 </div>
 
+<div class="page" id="page-admin">
+  <div class="shdr" style="margin-top:10px">
+    <h2>Admin · API Keys</h2>
+    <button class="pill" onclick="adminLoadKeys()" style="font-size:.6rem">↻ Refresh</button>
+  </div>
+
+  <!-- Status banner -->
+  <div id="admin-status-banner" style="margin-bottom:10px;padding:8px 12px;border-radius:2px;font-size:.7rem;background:#161616;border:1px solid #2a2a2a">
+    Loading…
+  </div>
+
+  <!-- Create key panel -->
+  <div class="panel" style="margin-bottom:12px">
+    <div class="ph">Create New API Key</div>
+    <div class="panel-body" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <input id="new-key-name" type="text" placeholder="Key name (e.g. vs-code-laptop)"
+        style="background:#161616;border:1px solid #2a2a2a;border-radius:2px;color:#e0e0e0;
+               font-size:.75rem;padding:5px 9px;flex:1;min-width:180px;outline:none"/>
+      <button onclick="adminCreateKey()"
+        style="background:#76b900;color:#000;border:none;border-radius:2px;padding:5px 14px;
+               font-size:.67rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">
+        Generate Key
+      </button>
+    </div>
+  </div>
+
+  <!-- New key display (shown after creation) -->
+  <div id="new-key-display" style="display:none;margin-bottom:12px" class="panel">
+    <div class="ph" style="color:var(--nv)">New API Key — Copy Now (shown once only)</div>
+    <div class="panel-body">
+      <div style="display:flex;gap:8px;align-items:center">
+        <code id="new-key-value" style="font-family:var(--mono);font-size:.75rem;
+          background:#0a1a00;border:1px solid rgba(118,185,0,.3);border-radius:2px;
+          padding:6px 10px;flex:1;word-break:break-all;color:var(--nv)"></code>
+        <button onclick="adminCopyKey()"
+          style="background:#1c1c1c;color:var(--nv);border:1px solid rgba(118,185,0,.3);
+                 border-radius:2px;padding:5px 10px;font-size:.65rem;font-weight:700;cursor:pointer;
+                 white-space:nowrap">
+          Copy
+        </button>
+      </div>
+      <div style="font-size:.62rem;color:var(--sub);margin-top:6px">
+        ⚠ Add this key to <code style="color:var(--text)">PROXY_API_KEYS</code> in your .env
+        and to <code style="color:var(--text)">COPILOT_PROVIDER_API_KEY</code> in copilot-dgx.bat.
+        It will not be shown again.
+      </div>
+    </div>
+  </div>
+
+  <!-- Keys table -->
+  <div class="panel">
+    <div class="ph">Active API Keys <span id="admin-key-count" class="ph-badge" style="margin-left:6px">0</span></div>
+    <div class="panel-body" style="padding:0">
+      <div class="tw">
+        <table id="admin-keys-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Key Preview</th>
+              <th>Created</th>
+              <th>Last Used</th>
+              <th>Source</th>
+              <th>Status</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="admin-keys-body">
+            <tr><td colspan="7" style="color:var(--sub);text-align:center;padding:18px">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div style="margin-top:10px;font-size:.62rem;color:var(--sub)">
+    Static keys (from <code>PROXY_API_KEYS</code> env var) are not listed here — they are managed via .env.
+    Dynamic keys created here are stored in MongoDB and can be revoked without restarting the proxy.
+  </div>
+</div>
+
 <script>
 'use strict';
 
@@ -529,6 +663,73 @@ const PROXY_URL = window.__PROXY_URL || "";
  *  Injected by serve.py before </head>.  Typical value: "/copilot".
  */
 const BASE_PATH = window.__BASE_PATH || "";
+const BUILD_VERSION = window.__BUILD_VERSION || "unknown";
+const STALE_MS = 10000;
+const _chartFreshness = { gpu: 0, tps: 0, cpu: 0, disk: 0, net: 0 };
+
+function markChartFresh(key) {
+  _chartFreshness[key] = Date.now();
+}
+function isChartStale(key, ttl = STALE_MS) {
+  return Date.now() - (_chartFreshness[key] || 0) > ttl;
+}
+function applyBadgeState(id, baseText, stale) {
+  const el = $(id);
+  if (!el) return;
+  const text = baseText ?? el.dataset.baseText ?? el.textContent ?? '—';
+  el.dataset.baseText = text;
+  el.textContent = stale ? `⚠ ${text}` : text;
+  el.style.color = stale ? 'var(--red)' : '';
+}
+function refreshStaleBadges() {
+  applyBadgeState('gpu-temp-badge', null, isChartStale('gpu'));
+  applyBadgeState('gpu-mem-badge', null, isChartStale('gpu'));
+  applyBadgeState('tps-peak', null, isChartStale('tps'));
+  applyBadgeState('avg-tps', null, isChartStale('tps'));
+  applyBadgeState('cpu-avg-badge', null, isChartStale('cpu'));
+  applyBadgeState('disk-busy-badge', null, isChartStale('disk'));
+  applyBadgeState('net-total-badge', null, isChartStale('net'));
+}
+function forceLogout(reason = 'Authentication issue') {
+  const target = (BASE_PATH || '') + '/logout?reason=' + encodeURIComponent(reason);
+  window.location.assign(target);
+}
+
+// Format: v1.0.0-20260630-191512 → v1.0.0 • Jun 30, 2026 at 7:15 PM
+function formatBuildVersion(bv) {
+    if (!bv || bv === 'unknown') return { version: 'unknown', date: '' };
+    const parts = bv.split('-');
+    if (parts.length < 2) return { version: bv, date: '' };
+    
+    // Extract version and datetime parts
+    let versionStr = parts[0];
+    if (!versionStr.startsWith('v')) versionStr = 'v' + versionStr;
+    
+    const datePart = parts.slice(1, 4).join('-'); // e.g. "20260630"
+    const timePart = parts.length > 4 ? parts[4] : ''; // e.g., "191512"
+    
+    if (datePart.length >= 8) {
+        try {
+            const year = datePart.slice(0, 4);
+            const monthIdx = parseInt(datePart.slice(4, 6)) - 1;
+            const day = datePart.slice(6, 8);
+            const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+            const dateStr = `${months[monthIdx]} ${parseInt(day)}, ${year}`;
+            
+            if (timePart.length >= 4) {
+                let hour = parseInt(timePart.slice(0, 2));
+                const min = timePart.slice(2, 4);
+                const ampm = hour >= 12 ? 'PM' : 'AM';
+                hour = hour % 12 || 12;
+                return { version: versionStr, date: `${dateStr} at ${hour}:${min} ${ampm}` };
+            }
+            return { version: versionStr, date: dateStr };
+        } catch (e) {
+            // Fallback
+        }
+    }
+    return { version: versionStr, date: '' };
+}
 
 /**
  * pFetch — like fetch(), but prepends PROXY_URL so the dashboard can
@@ -539,7 +740,13 @@ const BASE_PATH = window.__BASE_PATH || "";
  */
 function pFetch(path, opts) {
   const target = PROXY_URL ? PROXY_URL + path : BASE_PATH + path;
-  return fetch(target, opts);
+  return fetch(target, opts).then(r => {
+    if (r.status === 401 || r.status === 403) {
+      forceLogout('Authentication failed');
+      throw new Error(`Authentication failed (${r.status})`);
+    }
+    return r;
+  });
 }
 
 // ── Utilities ─────────────────────────────────────────────────────────────
@@ -595,6 +802,7 @@ function showPage(id, btn) {
   else if (id==='usage') loadUsage();
   else if (id==='cost') loadCostPage();
   else if (id==='models') loadModels();
+  else if (id==='admin') { adminLoadStatus(); adminLoadKeys(); }
 }
 
 // ── Clock ─────────────────────────────────────────────────────────────────
@@ -742,6 +950,7 @@ function initGpuCharts(gpus) {
 function updateGpuCharts(gpus, ramPct) {
   if (!gpus?.length) return;
   if (!_gpuInitialized) initGpuCharts(gpus);
+  markChartFresh('gpu');
 
   const labels = buildTimeLabels();
 
@@ -776,20 +985,25 @@ function updateGpuCharts(gpus, ramPct) {
 
   // Badges
   const g0 = gpus[0];
+  const stale = isChartStale('gpu');
   const tb = $('gpu-temp-badge');
   if (tb && g0?.temp_c) {
     const t = g0.temp_c;
-    tb.textContent = fTemp(t)||`${g0.util_percent}%`;
-    tb.style.color = t >= 85 ? 'var(--red)' : t >= 70 ? 'var(--yellow)' : 'var(--nv)';
+    const text = fTemp(t)||`${g0.util_percent}%`;
+    applyBadgeState('gpu-temp-badge', text, stale);
+    tb.style.color = stale ? 'var(--red)' : (t >= 85 ? 'var(--red)' : t >= 70 ? 'var(--yellow)' : 'var(--nv)');
   }
   const mb = $('gpu-mem-badge');
   if (mb) {
+    let text = '—';
     if (_unifiedMem) {
-      mb.textContent = `RAM ${ramPct||0}%`;
-      mb.style.color = 'var(--blue)';
+      text = `RAM ${ramPct||0}%`;
+      mb.style.color = stale ? 'var(--red)' : 'var(--blue)';
     } else if (g0?.mem_total_mb) {
-      mb.textContent = `${(g0.mem_used_mb/1024).toFixed(1)}/${(g0.mem_total_mb/1024).toFixed(0)} GB`;
+      text = `${(g0.mem_used_mb/1024).toFixed(1)}/${(g0.mem_total_mb/1024).toFixed(0)} GB`;
+      mb.style.color = stale ? 'var(--red)' : '';
     }
+    applyBadgeState('gpu-mem-badge', text, stale);
   }
 
   // Util bar under chart
@@ -839,6 +1053,7 @@ function initTpsChart() {
 }
 
 function updateTpsChart(history, currentTps) {
+  markChartFresh('tps');
   const c = _charts['cTps']; if (!c) return;
   const pts = history.slice(-HIST_MAX);
   // Build time labels for TPS (same pattern)
@@ -851,10 +1066,20 @@ function updateTpsChart(history, currentTps) {
   c.data.labels = tpsLabels;
   c.data.datasets[0].data = pts.map(h => h.value||0);
   c.update('none');
+  const stale = isChartStale('tps');
+  const peakEl = $('tps-peak');
+  if (peakEl) {
+    const peakText = currentTps > 0 ? `peak ${Math.max(_peakTps, currentTps).toFixed(1)}` : `peak ${_peakTps.toFixed(1)}`;
+    applyBadgeState('tps-peak', peakText, stale);
+  }
+  const avgEl = $('avg-tps');
+  if (avgEl) {
+    const avgText = currentTps > 0 ? `${(_tpsSum/_tpsCount).toFixed(1)}` : `${(_tpsSum/_tpsCount).toFixed(1)}`;
+    applyBadgeState('avg-tps', avgText, stale);
+  }
   if (currentTps > 0) {
-    if (currentTps > _peakTps) { _peakTps = currentTps; $('tps-peak').textContent = `peak ${_peakTps.toFixed(1)}`; }
+    if (currentTps > _peakTps) { _peakTps = currentTps; }
     _tpsSum += currentTps; _tpsCount++;
-    $('avg-tps').textContent = (_tpsSum/_tpsCount).toFixed(1);
   }
 }
 
@@ -890,18 +1115,203 @@ function renderDiskModels(models) {
   ).join('');
 }
 
+// ── CPU per-core bar chart + average line ────────────────────────────────
+const _cpuAvgHist = [];          // rolling avg CPU% over time
+let _nCpuCores = 0;
+const HIST_MAX_RES = 120;        // same as GPU hist window
+
+function cpuBarColor(v) {
+  // green(0-50) → yellow(50-80) → red(80-100+)
+  if (v <= 50) return '#76b900';
+  if (v <= 80) {
+    const t = (v - 50) / 30;
+    const r = Math.round(118 + (245 - 118) * t);
+    const g = Math.round(185 + (166 - 185) * t);
+    const b = Math.round(0 + (35 - 0) * t);
+    return `rgb(${r},${g},${b})`;
+  }
+  const t = Math.min((v - 80) / 20, 1);
+  const r = Math.round(245 + (224 - 245) * t);
+  const g = Math.round(166 + (64 - 166) * t);
+  const b = Math.round(35 + (64 - 35) * t);
+  return `rgb(${r},${g},${b})`;
+}
+
+function initCpuCharts() {
+  // Per-core bar chart — initialized with empty data when sys arrives
+  if (!$('cCpuBar')) return;
+  mkChart('cCpuBar', {
+    type: 'bar',
+    data: { labels: [], datasets: [{data:[], backgroundColor:['#333'], borderRadius:1, barPercentage:0.85}] },
+  }, {
+    plugins: {legend:{display:false}, tooltip:{mode:'index',intersect:false,bodyFont:{size:9}}},
+    scales: {
+      x: {ticks:{color:'#444',font:{size:7,maxTicksLimit:20},maxRotation:0,autoSkip:false},grid:{display:false}},
+      y: _yOpts(100),
+    },
+  });
+
+  // Average CPU% rolling line
+  mkChart('cCpuAvg', {
+    type: 'line',
+    data: { labels:[], datasets:[{label:'Avg %',data:[],fill:true,borderColor:'#76b900',backgroundColor:'rgba(118,185,0,.08)',borderWidth:1.2,tension:.35,pointRadius:0}] },
+  }, { scales:{x:_xOptsTime,y:_yOpts(100)} });
+}
+
+function updateCpuCharts(cpuPer, cpuPercent) {
+  markChartFresh('cpu');
+  const labels = (cpuPer||[]).map((_,i)=>`#${i}`);
+  // Bar chart
+  const bc = _charts['cCpuBar'];
+  if (bc) {
+    bc.data.labels = labels;
+    bc.data.datasets[0].data = cpuPer.map(v=>v||0);
+    bc.data.datasets[0].backgroundColor = cpuPer.map(cpuBarColor);
+    bc.update('none');
+  }
+
+  // Average line — collect point and push to rolling history
+  const avg = (cpuPercent != null) ? cpuPercent : (cpuPer?.reduce((a,b)=>a+(b||0),0)/(cpuPer?.length||1)) || 0;
+  _cpuAvgHist.push(avg);
+  if (_cpuAvgHist.length > HIST_MAX_RES) _cpuAvgHist.shift();
+
+  const ac = _charts['cCpuAvg'];
+  if (ac) {
+    ac.data.labels = makeTimeLabels(_cpuAvgHist.length, HIST_INTERVAL);
+    ac.data.datasets[0].data = _cpuAvgHist;
+    ac.update('none');
+  }
+
+  // Badge
+  const badge = $('cpu-avg-badge');
+  if (badge) applyBadgeState('cpu-avg-badge', `${avg.toFixed(1)}% avg`, isChartStale('cpu'));
+}
+
+// ── Disk I/O area chart ──────────────────────────────────────────────────
+const _diskHist = [];   // [{rd, wr, busy}]
+let _peakDiskRd=0, _peakDiskWr=0;
+
+function initDiskCharts() {
+  mkChart('cDisk', {
+    type: 'line',
+    data: { labels:[], datasets:[
+      {label:'Read MB/s',data:[],fill:true,borderColor:'#76b900',backgroundColor:'rgba(118,185,0,.1)',borderWidth:1.2,tension:.3,pointRadius:0},
+      {label:'Write MB/s',data:[],fill:true,borderColor:'#00a3e0',backgroundColor:'rgba(0,163,224,.1)',borderWidth:1.2,tension:.3,pointRadius:0},
+    ]},
+  }, {scales:{x:_xOptsTime,y:_yOpts()}});
+}
+
+function updateDiskCharts(sys) {
+  markChartFresh('disk');
+  const rdBytes = sys.disk_read_bytes_s || 0;
+  const wrBytes = sys.disk_write_bytes_s || 0;
+  const busy = sys.disk_busy_pct ?? null;
+  const rdMbs = Math.round(rdBytes / 1024 / 1024 * 10) / 10;
+  const wrMbs = Math.round(wrBytes / 1024 / 1024 * 10) / 10;
+
+  _diskHist.push({rd: rdMbs, wr: wrMbs, busy});
+  if (_diskHist.length > HIST_MAX_RES) _diskHist.shift();
+
+  const dc = _charts['cDisk'];
+  if (dc) {
+    dc.data.labels = makeTimeLabels(_diskHist.length, HIST_INTERVAL);
+    dc.data.datasets[0].data = _diskHist.map(h=>h.rd);
+    dc.data.datasets[1].data = _diskHist.map(h=>h.wr);
+    dc.update('none');
+  }
+
+  // Busy bar & badge
+  if (busy != null) {
+    setBar('bar-disk-busy','val-disk-busy', busy, `${busy}%`);
+    const bb = $('disk-busy-badge'); if(bb) applyBadgeState('disk-busy-badge', `${busy}% busy`, isChartStale('disk'));
+  }
+  // Peaks
+  if (rdMbs > _peakDiskRd) { _peakDiskRd = rdMbs; $('peak-disk-rd').textContent = _peakDiskRd.toFixed(1); }
+  if (wrMbs > _peakDiskWr) { _peakDiskWr = wrMbs; $('peak-disk-wr').textContent = _peakDiskWr.toFixed(1); }
+}
+
+// ── Network I/O area chart ───────────────────────────────────────────────
+const _netHist = [];   // [{rx, tx}]
+let _peakNetRx=0, _peakNetTx=0;
+
+function initNetCharts() {
+  mkChart('cNet', {
+    type: 'line',
+    data: { labels:[], datasets:[
+      {label:'↓ RX MB/s',data:[],fill:true,borderColor:'#76b900',backgroundColor:'rgba(118,185,0,.1)',borderWidth:1.2,tension:.3,pointRadius:0},
+      {label:'↑ TX MB/s',data:[],fill:true,borderColor:'#00c9b1',backgroundColor:'rgba(0,201,177,.1)',borderWidth:1.2,tension:.3,pointRadius:0},
+    ]},
+  }, {scales:{x:_xOptsTime,y:_yOpts()}});
+}
+
+function updateNetCharts(sys) {
+  markChartFresh('net');
+  const rxBytes = sys.net_rx_bytes_s || 0;
+  const txBytes = sys.net_tx_bytes_s || 0;
+  const rxMbs = Math.round(rxBytes / 1024 / 1024 * 10) / 10;
+  const txMbs = Math.round(txBytes / 1024 / 1024 * 10) / 10;
+
+  _netHist.push({rx: rxMbs, tx: txMbs});
+  if (_netHist.length > HIST_MAX_RES) _netHist.shift();
+
+  const nc = _charts['cNet'];
+  if (nc) {
+    nc.data.labels = makeTimeLabels(_netHist.length, HIST_INTERVAL);
+    nc.data.datasets[0].data = _netHist.map(h=>h.rx);
+    nc.data.datasets[1].data = _netHist.map(h=>h.tx);
+    nc.update('none');
+  }
+
+  // Peaks & total badge
+  if (rxMbs > _peakNetRx) { _peakNetRx = rxMbs; $('peak-net-rx').textContent = _peakNetRx.toFixed(1); }
+  if (txMbs > _peakNetTx) { _peakNetTx = txMbs; $('peak-net-tx').textContent = _peakNetTx.toFixed(1); }
+  const total = rxMbs + txMbs;
+  const nb = $('net-total-badge');
+  if (nb) applyBadgeState('net-total-badge', total > 0 ? `${total.toFixed(1)} MB/s` : '—', isChartStale('net'));
+}
+
 // ── System bars ───────────────────────────────────────────────────────────
-function updateSysbar(sys) {
+function updateSysbar(sys, activeModels = []) {
   if (!sys) return;
   setBar('bar-cpu','val-cpu', sys.cpu_percent, sys.cpu_percent != null ? sys.cpu_percent+'%' : '—');
   setBar('bar-ram','val-ram', sys.ram_percent, sys.ram_total_gb ? `${sys.ram_used_gb}/${sys.ram_total_gb}GB` : '—');
   setBar('bar-disk','val-disk', sys.disk_percent, sys.disk_total_gb ? `${sys.disk_used_gb}/${sys.disk_total_gb}GB` : '—');
   // GPU charts — only populate when real GPU data is available.
-  // CPU% is shown in the system bars above; never synthesize a CPU entry here.
   const gpus = sys.gpus ?? [];
   collectPt(gpus, sys.ram_percent);
   if (gpus.length) updateGpuCharts(gpus, sys.ram_percent);
   if (sys.ollama_models) renderDiskModels(sys.ollama_models);
+
+  const note = $('gpu-mem-note');
+  if (note) {
+    const bits = [];
+    const loaded = (sys.loaded_models || []).filter(Boolean);
+    const active = (activeModels || []).filter(Boolean);
+    if (loaded.length) bits.push(`Loaded: ${loaded.join(', ')}`);
+    if (active.length) bits.push(`Active: ${active.join(', ')}`);
+    if (isChartStale('gpu')) bits.push('⚠ stale');
+    if (bits.length) {
+      note.textContent = bits.join(' • ');
+      note.style.display = '';
+    } else if (_unifiedMem) {
+      note.textContent = 'Unified memory — system RAM shared between CPU and GPU workloads';
+      note.style.display = '';
+    } else {
+      note.style.display = 'none';
+    }
+  }
+
+  // ── New system resource charts ────────────────────────────────────────────
+  if (sys.cpu_per_core?.length) {
+    if (!_charts['cCpuBar']) initCpuCharts();
+    updateCpuCharts(sys.cpu_per_core, sys.cpu_percent);
+  }
+  // Disk IO — always try; will show zeros if backend doesn't provide delta fields
+  if (!_charts['cDisk']){initDiskCharts();}
+  updateDiskCharts(sys);
+  // Network IO
+  if (!_charts['cNet']){initNetCharts();}
+  updateNetCharts(sys);
 }
 
 // ── Event log ─────────────────────────────────────────────────────────────
@@ -946,8 +1356,9 @@ async function refreshLive() {
     $('kpi-act').textContent   = nf(d.active_requests);
     $('active-count-badge').textContent = d.active_requests||0;
 
-    if (d.sys) updateSysbar(d.sys);
+    if (d.sys) updateSysbar(d.sys, d.active_models);
     if (d.tps_history?.length) updateTpsChart(d.tps_history, d.combined_tps||0);
+    refreshStaleBadges();
 
     const recTtft = (d.history||[]).filter(r => (r.ttft_ms ?? r.ttft ?? 0) > 0).slice(0,10);
     if (recTtft.length) {
@@ -1088,16 +1499,6 @@ function renderModelsTable(models) {
       nameSub = '<span class="models-badge-inline alias-tag">alias</span> \u2192 '+(m.parent_model||'?');
     } else {
       nameSub = '<span class="models-badge-inline base-tag">base</span>';
-    }
-    
-    // Add specific model identifier to help users know what to use in Copilot
-    if (m.is_alias) {
-      // For aliases, include the actual alias they'd use
-      const displayName = m.id.replace(/:.+$/, '');
-      nameSub += '<br><span class="models-badge-inline copy-tag">Use as: <code>' + m.id + '</code></span>';
-    } else {
-      // For base models, include how to reference them
-      nameSub += '<br><span class="models-badge-inline copy-tag">Reference with: <code>' + m.id + '</code></span>';
     }
     const vramDot = m.is_loaded ? '<span class="vram-dot" title="Loaded in VRAM">\u25cf</span> ' : '';
     const upd = _modelUpdateState[m.id];
@@ -1283,6 +1684,7 @@ function setCostDays(d, btn) {
 async function loadCostPage() {
   try {
     const s = await pFetch(`/api/cost/summary?days=${_costDays}`).then(r=>r.json());
+
     const noData = !s || s.total_requests === undefined;
     $('cost-no-db').style.display = noData ? '' : 'none';
     if (noData) return;
@@ -1307,6 +1709,7 @@ async function loadCostPage() {
         <span style="color:var(--nv);font-weight:700;font-family:var(--mono)">${f$(s.savings_vs_high||0)}</span>
       </div>`;
     const dr = await pFetch(`/api/cost/daily?days=${_costDays}`).then(r=>r.json());
+
     const dd = dr.data||[];
     if (dd.length) {
       const lbl = dd.map(d=>d.date.slice(5));
@@ -1342,14 +1745,27 @@ function restorePanelOrder() {
 }
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────
-restorePanelOrder();
-initTpsChart();
-checkDb();
-refreshLive();
-updateVramModels();
-setInterval(refreshLive, 2000);
-setInterval(checkDb, 30000);
-setInterval(updateVramModels, 10000);
+// Each call is independently guarded — a failure in one (e.g. Chart.js CDN
+// unreachable) must not prevent the others (especially refreshLive(), which
+// populates all live data) from running.
+function safeBoot(fn, label) {
+  try {
+    const r = fn();
+    if (r && typeof r.catch === 'function') {
+      r.catch(e => console.error(`[bootstrap] ${label} failed:`, e));
+    }
+  } catch (e) {
+    console.error(`[bootstrap] ${label} failed:`, e);
+  }
+}
+safeBoot(restorePanelOrder, 'restorePanelOrder');
+safeBoot(initTpsChart, 'initTpsChart');
+safeBoot(checkDb, 'checkDb');
+safeBoot(refreshLive, 'refreshLive');
+safeBoot(updateVramModels, 'updateVramModels');
+setInterval(()=>safeBoot(refreshLive, 'refreshLive'), 2000);
+setInterval(()=>safeBoot(checkDb, 'checkDb'), 30000);
+setInterval(()=>safeBoot(updateVramModels, 'updateVramModels'), 10000);
 
 if (typeof Sortable !== 'undefined') {
   new Sortable($('live-grid'), {
@@ -1360,6 +1776,133 @@ if (typeof Sortable !== 'undefined') {
     onEnd: savePanelOrder
   });
 }
-</script>
-</body>
-</html>
+
+// ── Admin: API Key Management ─────────────────────────────────────────────────
+
+async function adminLoadStatus() {
+  try {
+    const r = await pFetch('/api/admin/status');
+    if (!r.ok) {
+      document.getElementById('admin-status-banner').innerHTML =
+        `<span style="color:var(--red)">⚠ Cannot reach admin API (${r.status}). Check ADMIN_USERNAME/ADMIN_PASSWORD.</span>`;
+      return;
+    }
+    const d = await r.json();
+    document.getElementById('admin-status-banner').innerHTML =
+      `Auth: <b style="color:${d.api_key_required ? 'var(--nv)' : 'var(--yellow)'}">
+        ${d.api_key_required ? 'ENABLED' : 'DISABLED'}</b> &nbsp;·&nbsp;
+       Static keys: <b>${d.static_key_count}</b> &nbsp;·&nbsp;
+       MongoDB: <b style="color:${d.mongodb_enabled ? 'var(--nv)' : 'var(--sub)'}">
+         ${d.mongodb_enabled ? 'Connected' : 'Offline (memory mode)'}</b>`;
+  } catch(e) {
+    document.getElementById('admin-status-banner').innerHTML =
+      `<span style="color:var(--red)">⚠ ${e.message}</span>`;
+  }
+}
+
+async function adminLoadKeys() {
+  const tbody = document.getElementById('admin-keys-body');
+  const cntEl = document.getElementById('admin-key-count');
+  try {
+    const r = await pFetch('/api/admin/keys');
+    if (!r.ok) {
+      tbody.innerHTML = `<tr><td colspan="7" style="color:var(--red);text-align:center;padding:16px">
+        Error ${r.status} — check admin credentials in ADMIN_USERNAME/ADMIN_PASSWORD env vars.</td></tr>`;
+      return;
+    }
+    const d = await r.json();
+    const keys = d.data || [];
+    cntEl.textContent = keys.length;
+    if (!keys.length) {
+      tbody.innerHTML = '<tr><td colspan="7" style="color:var(--sub);text-align:center;padding:18px">No dynamic keys found.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = keys.map(k => {
+      const created = k.created_at ? k.created_at.slice(0,16).replace('T',' ') : '—';
+      const used = k.last_used ? k.last_used.slice(0,16).replace('T',' ') : 'Never';
+      const active = k.is_active !== false;
+      const id = k._id || k.key_id || '';
+      const preview = k.key_preview || '(hidden)';
+      return `<tr>
+        <td style="font-weight:600">${escHtml(k.name || '—')}</td>
+        <td><code style="font-size:.65rem;color:var(--teal)">${escHtml(preview)}</code></td>
+        <td style="color:var(--sub)">${created}</td>
+        <td style="color:var(--sub)">${used}</td>
+        <td><span class="badge b-ok">${escHtml(k.source || 'mongodb')}</span></td>
+        <td><span class="badge ${active ? 'b-live' : 'b-err'}">${active ? 'ACTIVE' : 'REVOKED'}</span></td>
+        <td>${active ? `<button onclick="adminRevokeKey('${escHtml(id)}')"
+          style="background:rgba(224,64,64,.15);color:var(--red);border:1px solid rgba(224,64,64,.2);
+                 border-radius:2px;padding:2px 8px;font-size:.6rem;font-weight:700;cursor:pointer">
+          Revoke</button>` : '—'}</td>
+      </tr>`;
+    }).join('');
+  } catch(e) {
+    tbody.innerHTML = `<tr><td colspan="7" style="color:var(--red);text-align:center;padding:16px">${escHtml(e.message)}</td></tr>`;
+  }
+}
+
+async function adminCreateKey() {
+  const name = document.getElementById('new-key-name').value.trim();
+  if (!name) { alert('Enter a name for the key.'); return; }
+  try {
+    const r = await pFetch('/api/admin/keys', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name})
+    });
+    if (!r.ok) {
+      const e = await r.json().catch(()=>({}));
+      alert('Error creating key: ' + (e.detail || r.status));
+      return;
+    }
+    const d = await r.json();
+    document.getElementById('new-key-value').textContent = d.key;
+    document.getElementById('new-key-display').style.display = 'block';
+    document.getElementById('new-key-name').value = '';
+    await adminLoadKeys();
+  } catch(e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+function adminCopyKey() {
+  const key = document.getElementById('new-key-value').textContent;
+  navigator.clipboard.writeText(key).then(() => {
+    const btn = event.target;
+    const orig = btn.textContent;
+    btn.textContent = 'Copied!';
+    setTimeout(() => btn.textContent = orig, 2000);
+  });
+}
+
+async function adminRevokeKey(keyId) {
+  if (!confirm('Revoke this API key? Any clients using it will lose access immediately.')) return;
+  try {
+    const r = await pFetch(`/api/admin/keys/${encodeURIComponent(keyId)}`, { method: 'DELETE' });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { alert('Error: ' + (d.detail || r.status)); return; }
+    await adminLoadKeys();
+  } catch(e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// Version display - format: v1.0.0 • Jun 30, 2026 at 7:15 PM
+(function renderBuildVersion() {
+  const versionEl = document.getElementById('dashboard-version');
+  const buildEl = document.getElementById('build-time');
+  const formatted = formatBuildVersion(BUILD_VERSION);
+  if (versionEl) versionEl.textContent = formatted.version;
+  if (buildEl && formatted.date) buildEl.textContent = formatted.date;
+})();
+    </script>
+    <div class="version-info" style="position:fixed;top:8px;right:20px;font-size:.58rem;color:#686868;background:#1a1a1a;padding:4px 12px;border-radius:12px;">
+      Dashboard v<span id="dashboard-version"></span> • <span id="build-time"></span>
+    </div>
+    </body>
+    </html>
+

@@ -340,6 +340,8 @@ class TokenTracker:
                     "ttft_ms": round(s.ttft_ms, 1),
                 })
 
+            active_models = sorted({s.get("model") for s in active_summaries if s.get("model")})
+
             return {
                 # session-level
                 "session_uptime_s": round(now - self.session_start_time),
@@ -347,6 +349,8 @@ class TokenTracker:
                 "success_count": self.success_count,
                 "error_count": self.error_count,
                 "active_requests": len(active_list),
+                "active_models": active_models,
+                "active_model_count": len(active_models),
 
                 # throughput
                 "combined_tps": round(combined_tps, 1),
